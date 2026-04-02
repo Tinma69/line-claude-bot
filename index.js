@@ -266,6 +266,22 @@ app.get('/app', (req, res) => {
   res.sendFile(__dirname + '/kouta_os.html');
 });
 
+// AI分析API中継
+app.post('/api/analyze', express.json(), async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    res.json({ text: response.content[0].text });
+  } catch (err) {
+    console.error('AI error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Webhookエンドポイント
 app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
   try {
