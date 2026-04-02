@@ -255,8 +255,16 @@ async function handleCommand(cmd, userId, originalMsg) {
 // ===== Expressサーバー =====
 const app = express();
 
+// 静的ファイル配信
+app.use(express.static(__dirname));
+
 // ヘルスチェック
 app.get('/', (req, res) => res.send('KOUTA OS Bot is running! 🏎️'));
+
+// KOUTA OSアプリ
+app.get('/app', (req, res) => {
+  res.sendFile(__dirname + '/kouta_os.html');
+});
 
 // Webhookエンドポイント
 app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
