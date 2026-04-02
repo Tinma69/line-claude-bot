@@ -85,6 +85,9 @@ function parseCommand(msg) {
   // AI分析
   if (/^(分析|analyze|週次|今週)$/.test(t)) return { type: 'analysis' };
 
+  // アプリ
+  if (/^(to do アプリ|todoアプリ|アプリ|todo)$/i.test(t)) return { type: 'app_url' };
+
   // ヘルプ
   if (/^(ヘルプ|help|\?)$/.test(t)) return { type: 'help' };
 
@@ -184,6 +187,13 @@ async function handleCommand(cmd, userId, originalMsg) {
         messages: [{ role: 'user', content: prompt }],
       });
       return response.content[0].text;
+    }
+
+    case 'app_url': {
+      const appUrl = process.env.RENDER_EXTERNAL_URL
+        ? `${process.env.RENDER_EXTERNAL_URL}/app`
+        : 'https://line-claude-bot.onrender.com/app';
+      return `📱 KOUTA OS はこちら！\n\n${appUrl}\n\nTo-do・習慣記録・グラフ・AI分析が使えます。`;
     }
 
     case 'help': {
