@@ -80,14 +80,14 @@ const { data } = await supabase.from(‘habits’).update(habitData)
 return data?.[0];
 } else {
 const { data } = await supabase.from(‘habits’)
-.insert({ user_id: userId, date, …habitData }).select();
+.insert({ user_id: userId, date, ...habitData }).select();
 return data?.[0];
 }
 }
 
 async function getLast7Habits(userId) {
 const last7 = [];
-for (let i = 6; i >= 0; i–) {
+for (let i = 6; i >= 0; i--) {
 const d = new Date(); d.setDate(d.getDate() - i);
 const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
 last7.push(jst.toISOString().split(‘T’)[0]);
