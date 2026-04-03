@@ -1,7 +1,8 @@
 const express = require(‘express’);
 const line = require(’@line/bot-sdk’);
 const Anthropic = require(’@anthropic-ai/sdk’);
-const { createClient } = require(’@supabase/supabase-js’);
+const { createClient } = require('@supabase/supabase-js');
+
 
 // ===== 設定 =====
 const lineConfig = {
