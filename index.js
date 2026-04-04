@@ -184,6 +184,7 @@ default: {
 if (!conversationHistory[userId]) conversationHistory[userId] = [];
 const todayRec = await getHabit(userId, today);
 const tasks = await getTasks(userId);
+  
 const pendingTasks = tasks.filter(t => !t.done).map(t => t.name).join( '・  '・;
 const systemPrompt = `縺ゅ↑縺溘・FIA F4繝ｬ繝ｼ繧ｷ繝ｳ繧ｰ繝峨Λ繧､繝舌・蜈ｼ繧ｫ繝ｼ繧ｷ繝ｧ繝・・繧ｪ繝ｼ繝翫・縺ｮ繧ｳ繧ｦ繧ｿ縺輔ｓ蟆ょｱ槭・繝代・繧ｽ繝翫Ν繧ｳ繝ｼ繝∝・繧｢繧ｷ繧ｹ繧ｿ繝ｳ繝医〒縺吶・繧ｳ繧ｦ繧ｿ縺輔ｓ縺ｫ縺､縺・※・・
 - 豈取悃7譎ょ濠襍ｷ蠎翫・譎ゅ↓4.5km繝ｩ繝ｳ繝九Φ繧ｰ縺励※蜃ｺ遉ｾ
