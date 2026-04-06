@@ -19,7 +19,7 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const TKEY = "kos_tasks_v4";
 const HKEY = "kos_habit_v4";
@@ -136,10 +136,13 @@ function App() {
   const [newPri, setNewPri] = useState("mid");
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [form, setForm] = useState({rKm:"",rMin:"",slH:"",wtKg:"",simMin:"",calKcal:"",calMemo:""});
-  const [aiText, setAiText] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    { role: "ai", text: "こんにちは、コウタさん！\n分析・タスク相談・雑談、何でも聞いてください 🏎️" }
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef(null);
 
   useEffect(() => {
     let t = JSON.parse(localStorage.getItem(TKEY)||"null");
@@ -183,30 +186,29 @@ function App() {
 
   const chartData = field => { const {labels,keys}=last7(); return keys.map((k,i)=>{const r=habits.find(h=>h.date===k);return {label:labels[i],val:r&&r[field]!=null?r[field]:null};}); };
 
-  const buildPrompt = () => {
-    const {keys}=last7();
-    const week=habits.filter(h=>keys.includes(h.date));
-    if(!week.length) return null;
-    const avg=f=>{const v=week.map(h=>h[f]).filter(x=>x!=null);return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—";};
-    const sumF=f=>{const v=week.map(h=>h[f]).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b,0).toFixed(1):"—";};
-    const summary=week.map(r=>`${r.date}: 走行${r.runKm??"—"}km(${r.runMin??"—"}min), 睡眠${r.sleepH??"—"}h, 体重${r.weightKg??"—"}kg, カロリー${r.calKcal??"—"}kcal, シミュレーター${r.simMin??"—"}min`).join("\n");
-    return `あなたはプロのフィジカルコーチ兼パフォーマンスアナリストです。FIA F4レーシングドライバー兼カーショップオーナーのコウタさんの直近7日間の習慣データを分析してください。\n\n記録:\n${summary}\n\n平均: ランニング${avg("runKm")}km/日, 睡眠${avg("sleepH")}h/日, 体重${week.filter(h=>h.weightKg).slice(-1)[0]?.weightKg??"—"}kg\n\n1.今週の総評(2-3文) 2.良かった点 3.改善点 4.来週のアドバイス3つ を日本語で。F4ドライバーとしてのパフォーマンス観点も含めて。`;
-  };
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
 
-  const runAI = async () => {
-    const prompt=buildPrompt();
-    if(!prompt){setAiText("❌ LOGタブでデータを入力してください。");return;}
-    setAiLoading(true);setAiText("");
+  const sendChat = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading) return;
+    setChatInput("");
+    setChatMessages(prev => [...prev, { role: "user", text: msg }]);
+    setChatLoading(true);
     try {
-      const res=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt})});
-      const data=await res.json();
-      if(data.error) setAiText("エラー: "+data.error);
-      else setAiText(data.text||"レスポンスが空でした");
-    } catch(e){setAiText("COPY:"+prompt);}
-    setAiLoading(false);
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, tasks, habits }),
+      });
+      const data = await res.json();
+      setChatMessages(prev => [...prev, { role: "ai", text: data.error ? "エラーが発生しました。" : data.text }]);
+    } catch(e) {
+      setChatMessages(prev => [...prev, { role: "ai", text: "エラーが発生しました。" }]);
+    }
+    setChatLoading(false);
   };
-
-  const copyPrompt = () => { navigator.clipboard.writeText(aiText.replace("COPY:","")); setCopied(true); setTimeout(()=>setCopied(false),2000); };
 
   const done=tasks.filter(t=>t.done).length, total=tasks.length, pct=total?Math.round(done/total*100):0, circ=144.5;
   const isToday=selectedDate===todayStr();
@@ -340,36 +342,43 @@ function App() {
         ))}
       </div>}
 
-      {tab==="ai"&&<div style={{padding:"14px 14px 0"}}>
-        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:16,marginBottom:14,display:"flex",alignItems:"center",gap:12}}>
-          <div style={{fontSize:30}}>🤖</div>
-          <div><div style={{fontWeight:700,marginBottom:3}}>AI 週次コーチ</div><div style={{fontSize:11,color:C.muted2}}>直近7日のデータをClaudeが分析</div></div>
+      {tab==="ai"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 124px)",padding:"14px 14px 0"}}>
+        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+          <div style={{fontSize:22}}>🤖</div>
+          <div><div style={{fontWeight:700,fontSize:13}}>AI マルチエージェント</div><div style={{fontSize:10,color:C.muted2}}>分析 / タスク相談 / 雑談 — 何でもOK</div></div>
         </div>
-        {(()=>{
-          const {keys}=last7();
-          const week=habits.filter(h=>keys.includes(h.date));
-          if(!week.length) return <div style={{textAlign:"center",color:C.muted2,padding:"16px 0",fontSize:12}}>LOGタブでデータを入力してください</div>;
-          const avg=f=>{const v=week.map(h=>h[f]).filter(x=>x!=null);return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—";};
-          const sumF=f=>{const v=week.map(h=>h[f]).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b,0).toFixed(1):"—";};
-          const rows=[["🏃 平均走行距離",avg("runKm")+" km/日"],["🌙 平均睡眠",avg("sleepH")+" h/日"],["⚖️ 最新体重",(week.filter(h=>h.weightKg).slice(-1)[0]?.weightKg??"—")+" kg"],["🍱 平均カロリー",avg("calKcal")+" kcal/日"],["🎮 シミュ合計",sumF("simMin")+" min"],["📅 記録日数",week.length+" / 7日"]];
-          return <div style={{background:C.s2,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-            <div style={{fontSize:9,color:C.muted2,letterSpacing:"0.12em",marginBottom:8}}>直近7日 サマリー</div>
-            {rows.map(([k,v])=><div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"5px 0",borderBottom:`1px solid ${C.border}`}}><span style={{color:C.muted2}}>{k}</span><span style={{fontWeight:700}}>{v}</span></div>)}
-          </div>;
-        })()}
-        <button onClick={runAI} disabled={aiLoading} style={{width:"100%",background:aiLoading?"#222":"#fff",color:aiLoading?C.muted2:"#000",border:"none",borderRadius:11,padding:14,fontSize:13,fontWeight:700,cursor:aiLoading?"default":"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-          {aiLoading?<span>● 分析中...</span>:<span>✦ 今週を分析する</span>}
-        </button>
-        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:18,minHeight:100}}>
-          <div style={{fontSize:9,color:C.muted2,letterSpacing:"0.14em",marginBottom:12}}>ANALYSIS</div>
-          {!aiText&&<div style={{textAlign:"center",color:C.muted2,fontSize:12,padding:"16px 0"}}>ボタンを押すと分析が始まります</div>}
-          {aiText&&aiText.startsWith("COPY:")?<div>
-            <div style={{fontSize:11,color:C.sim,marginBottom:10,lineHeight:1.6,background:"rgba(16,185,129,.08)",padding:"8px 12px",borderRadius:8}}>📋 以下をコピーしてチャットに貼ると分析してもらえます</div>
-            <div style={{position:"relative"}}>
-              <textarea readOnly value={aiText.replace("COPY:","")} style={{width:"100%",background:C.s2,border:`1px solid ${C.border}`,borderRadius:10,padding:12,color:C.text,fontSize:10,lineHeight:1.7,fontFamily:"inherit",resize:"none",height:160,outline:"none"}}/>
-              <button onClick={copyPrompt} style={{position:"absolute",top:8,right:8,background:copied?"#10b981":C.s3,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>{copied?"✓":"コピー"}</button>
+        <div style={{flex:1,overflowY:"auto",paddingBottom:8}}>
+          {chatMessages.map((m,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",marginBottom:10}}>
+              <div style={{
+                maxWidth:"82%",
+                background:m.role==="user"?"#fff":C.s2,
+                color:m.role==="user"?"#000":C.text,
+                borderRadius:m.role==="user"?"16px 16px 4px 16px":"16px 16px 16px 4px",
+                padding:"10px 14px",fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap"
+              }}>{m.text}</div>
             </div>
-          </div>:aiText?<div style={{fontSize:13,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{aiText}</div>:null}
+          ))}
+          {chatLoading&&(
+            <div style={{display:"flex",justifyContent:"flex-start",marginBottom:10}}>
+              <div style={{background:C.s2,borderRadius:"16px 16px 16px 4px",padding:"10px 14px",fontSize:13,color:C.muted2}}>● 考え中...</div>
+            </div>
+          )}
+          <div ref={chatEndRef}/>
+        </div>
+        <div style={{display:"flex",gap:8,paddingTop:10,paddingBottom:14,background:C.bg,flexShrink:0}}>
+          <input
+            value={chatInput}
+            onChange={e=>setChatInput(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&sendChat()}
+            placeholder="メッセージを入力..."
+            style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:22,padding:"10px 16px",color:C.text,fontSize:13,fontFamily:"inherit",outline:"none"}}
+          />
+          <button
+            onClick={sendChat}
+            disabled={chatLoading||!chatInput.trim()}
+            style={{background:chatLoading||!chatInput.trim()?C.s3:"#fff",color:chatLoading||!chatInput.trim()?C.muted2:"#000",border:"none",borderRadius:"50%",width:42,height:42,fontSize:18,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}
+          >↑</button>
         </div>
       </div>}
 

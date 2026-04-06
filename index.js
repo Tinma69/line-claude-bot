@@ -357,6 +357,116 @@ async function coachAgent(userId, userMessage) {
   return replyText;
 }
 
+// ===== Webアプリ用マルチエージェント =====
+// localStorageのtasks・habitsをフロントから受け取って処理する
+
+const WEB_ORCHESTRATOR_TOOLS = [
+  {
+    name: 'analysis_agent',
+    description: '習慣データの分析・フィードバック。「分析して」「今週どうだった」「フィードバック」「評価」など。',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'task_agent',
+    description: 'タスクへのコメント・アドバイス・優先順位の相談。「タスクどう思う？」「何から始める？」など。',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'coach_agent',
+    description: 'それ以外のすべての会話。相談・励まし・レーシング・雑談など。',
+    input_schema: { type: 'object', properties: {} },
+  },
+];
+
+async function webOrchestrate(message, tasks = [], habits = []) {
+  const res = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 200,
+    system: 'ルーティング専用。必ず1つツールを呼び出してください。',
+    messages: [{ role: 'user', content: message }],
+    tools: WEB_ORCHESTRATOR_TOOLS,
+    tool_choice: { type: 'any' },
+  });
+
+  const toolUse = res.content.find(c => c.type === 'tool_use');
+  const agentName = toolUse?.name || 'coach_agent';
+
+  if (agentName === 'analysis_agent') return webAnalysisAgent(message, habits);
+  if (agentName === 'task_agent')     return webTaskAgent(message, tasks);
+  return webCoachAgent(message, tasks, habits);
+}
+
+async function webAnalysisAgent(message, habits) {
+  if (!habits.length) return 'LOGタブでデータを入力してから分析してください。';
+
+  const today = new Date();
+  const last7Keys = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    last7Keys.push(d.toISOString().split('T')[0]);
+  }
+  const week = habits.filter(h => last7Keys.includes(h.date));
+  if (!week.length) return '直近7日間のデータがありません。';
+
+  const avg = f => {
+    const v = week.map(h => h[f]).filter(x => x != null);
+    return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : '—';
+  };
+  const summary = week.map(r =>
+    `${r.date}: 走行${r.runKm ?? '—'}km(${r.runMin ?? '—'}min), 睡眠${r.sleepH ?? '—'}h, 体重${r.weightKg ?? '—'}kg, カロリー${r.calKcal ?? '—'}kcal, シミュ${r.simMin ?? '—'}min`
+  ).join('\n');
+
+  const prompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のフィジカルコーチです。\n\n直近7日のデータ:\n${summary}\n\n平均: ランニング${avg('runKm')}km/日, 睡眠${avg('sleepH')}h/日\n\nユーザーの質問: ${message}\n\n簡潔に日本語で答えてください。`;
+
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 800,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return res.content[0].text;
+}
+
+async function webTaskAgent(message, tasks) {
+  const pending = tasks.filter(t => !t.done).map(t => `[${t.priority}] ${t.name}`).join('\n') || 'なし';
+  const done    = tasks.filter(t => t.done).map(t => t.name).join('\n') || 'なし';
+
+  const prompt = `あなたはコウタさん専属のコーチです。\n\n今日のタスク:\n【未完了】\n${pending}\n【完了済み】\n${done}\n\nユーザーの質問: ${message}\n\n簡潔に日本語で答えてください。`;
+
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 600,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return res.content[0].text;
+}
+
+async function webCoachAgent(message, tasks, habits) {
+  const today = new Date().toISOString().split('T')[0];
+  const todayHabit = habits.find(h => h.date === today);
+  const pendingTasks = tasks.filter(t => !t.done).map(t => t.name).join('、') || 'なし';
+
+  const systemPrompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のパーソナルコーチ兼アシスタントです。コウタさんについて:
+- 毎朝7時頃起床、4.5kmランニングして出社
+- J's Racingというホンダ系チューニングショップのオーナー兼マネージャー
+- FIA F4レーシングドライバーとして活動中
+- フードロスアプリの営業パートも兼任
+
+今日（${today}）の状況:
+- 未完了タスク: ${pendingTasks}
+- 今日の記録: ${todayHabit ? `走行${todayHabit.runKm ?? '—'}km, 睡眠${todayHabit.sleepH ?? '—'}h, 体重${todayHabit.weightKg ?? '—'}kg` : 'まだなし'}
+
+簡潔に日本語で答えてください。`;
+
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 800,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: message }],
+  });
+  return res.content[0].text;
+}
+
 // ===== サーバー =====
 const app = express();
 app.use(express.static(__dirname));
@@ -374,6 +484,17 @@ app.post('/api/analyze', express.json(), async (req, res) => {
       messages: [{ role: 'user', content: prompt }],
     });
     res.json({ text: response.content[0].text });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Webアプリ用チャットエンドポイント（マルチエージェント）
+app.post('/api/chat', express.json(), async (req, res) => {
+  try {
+    const { message, tasks = [], habits = [] } = req.body;
+    const text = await webOrchestrate(message, tasks, habits);
+    res.json({ text });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
