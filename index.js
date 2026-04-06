@@ -30,15 +30,12 @@ function todayStr() {
   return jst.toISOString().split('T')[0];
 }
 
-// ===== タスク =====
+// ===== DB操作 =====
 async function getTasks(userId) {
   const today = todayStr();
   const { data, error } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('date', today)
-    .order('id');
+    .from('tasks').select('*')
+    .eq('user_id', userId).eq('date', today).order('id');
   if (error || !data || data.length === 0) {
     const defaults = [
       { user_id: userId, name: '起床 7:30',             priority: 'must', cat: 'private', time: '07:30', done: false, date: today },
@@ -71,7 +68,6 @@ async function completeTask(userId, name) {
   return data[0];
 }
 
-// ===== 習慣記録 =====
 async function getHabit(userId, date) {
   const { data } = await supabase.from('habits').select('*')
     .eq('user_id', userId).eq('date', date).single();
@@ -104,130 +100,236 @@ async function getLast7Habits(userId) {
   return data || [];
 }
 
-// ===== コマンド解析 =====
-function parseCommand(msg) {
-  const t = msg.trim();
-  if (/^(タスク|todo|今日|やること)$/i.test(t)) return { type: 'tasks_list' };
+// ===== オーケストレーター定義 =====
+// Haikuが意図を判断してtool_useで振り分ける
+// Claude呼び出しが不要な操作（タスク・習慣）はそのままDB処理へ
+const ORCHESTRATOR_TOOLS = [
+  {
+    name: 'task_agent',
+    description: 'タスクの一覧表示・追加・完了に関するすべての操作。「タスク」「今日やること」「〇〇を追加」「〇〇が終わった」など。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'add', 'complete'],
+          description: 'list=一覧, add=追加, complete=完了',
+        },
+        task_name: {
+          type: 'string',
+          description: '追加・完了するタスク名（listの場合は不要）',
+        },
+        priority: {
+          type: 'string',
+          enum: ['must', 'high', 'mid', 'low'],
+          description: 'タスク追加時の優先度（省略時はmid）',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'habit_agent',
+    description: '習慣データの記録・確認。ランニング・睡眠・体重・カロリー・シミュレーターの記録や確認。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['log', 'view'],
+          description: 'log=記録する, view=今日の記録を見る',
+        },
+        run_km:    { type: 'number', description: '走行距離(km)' },
+        run_min:   { type: 'number', description: 'ランニング時間(分)' },
+        sleep_h:   { type: 'number', description: '睡眠時間(時間)' },
+        weight_kg: { type: 'number', description: '体重(kg)' },
+        cal_kcal:  { type: 'number', description: 'カロリー(kcal)' },
+        sim_min:   { type: 'number', description: 'シミュレーター練習時間(分)' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'analysis_agent',
+    description: '直近7日間の習慣データをAIが分析してフィードバックする。「分析」「今週どうだった」「週次」など。',
+    input_schema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'info_agent',
+    description: 'アプリURLの案内やヘルプ表示。「アプリ」「使い方」「ヘルプ」など。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['app_url', 'help'],
+        },
+      },
+      required: ['type'],
+    },
+  },
+  {
+    name: 'coach_agent',
+    description: 'タスク・習慣・分析・アプリ以外のすべての会話。相談・励まし・雑談・レーシングの話など。',
+    input_schema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+];
 
-  const doneMatch = t.match(/^(完了|done)\s+(.+)/);
-  if (doneMatch) return { type: 'task_done', name: doneMatch[2] };
+// ===== オーケストレーター =====
+async function orchestrate(userId, userMessage) {
+  const res = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 300,
+    system: 'あなたはルーティング専用のオーケストレーターです。ユーザーのメッセージを分析し、必ず適切なツールを1つ呼び出してください。曖昧な場合はcoach_agentを選んでください。',
+    messages: [{ role: 'user', content: userMessage }],
+    tools: ORCHESTRATOR_TOOLS,
+    tool_choice: { type: 'any' },
+  });
 
-  const addMatch = t.match(/^(追加|add)\s+(.+)/);
-  if (addMatch) return { type: 'task_add', name: addMatch[2] };
+  const toolUse = res.content.find(c => c.type === 'tool_use');
+  if (!toolUse) return coachAgent(userId, userMessage);
 
-  if (/^(記録|log)/.test(t)) {
-    const data = {};
-    const kmMatch    = t.match(/走行(\d+\.?\d*)km/);
-    const minMatch   = t.match(/(\d+)min/);
-    const sleepMatch = t.match(/睡眠(\d+\.?\d*)h/);
-    const weightMatch = t.match(/体重(\d+\.?\d*)kg/);
-    const calMatch   = t.match(/(\d+)kcal/);
-    const simMatch   = t.match(/シミュ(\d+)min/);
-    if (kmMatch)     data.run_km    = parseFloat(kmMatch[1]);
-    if (minMatch)    data.run_min   = parseInt(minMatch[1]);
-    if (sleepMatch)  data.sleep_h   = parseFloat(sleepMatch[1]);
-    if (weightMatch) data.weight_kg = parseFloat(weightMatch[1]);
-    if (calMatch)    data.cal_kcal  = parseInt(calMatch[1]);
-    if (simMatch)    data.sim_min   = parseInt(simMatch[1]);
-    return { type: 'habit_log', data };
+  switch (toolUse.name) {
+    case 'task_agent':     return taskAgent(userId, toolUse.input);
+    case 'habit_agent':    return habitAgent(userId, toolUse.input);
+    case 'analysis_agent': return analysisAgent(userId);
+    case 'info_agent':     return infoAgent(toolUse.input.type);
+    case 'coach_agent':    return coachAgent(userId, userMessage);
+    default:               return coachAgent(userId, userMessage);
   }
-
-  if (/^(今日の記録|記録確認ログ)$/.test(t)) return { type: 'habit_today' };
-  if (/^(分析|analyze|進捗|週次)$/.test(t))  return { type: 'analysis' };
-  if (/^(to do アプリ|todoアプリ|アプリ)$/i.test(t)) return { type: 'app_url' };
-  if (/^(ヘルプ|help|\?)$/.test(t))          return { type: 'help' };
-  return { type: 'chat' };
 }
 
-// ===== コマンド処理 =====
-async function handleCommand(cmd, userId, originalMsg) {
+// ===== 専門エージェント =====
+
+// タスクエージェント — Claude不要、DBだけで完結
+async function taskAgent(userId, { action, task_name, priority }) {
   const today = todayStr();
+  const priLabel = { must: '🔴', high: '🟠', mid: '🔵', low: '⚫' };
 
-  switch (cmd.type) {
-    case 'tasks_list': {
-      const tasks = await getTasks(userId);
-      const pending = tasks.filter(t => !t.done);
-      const done    = tasks.filter(t => t.done);
-      const priLabel = { must: '🔴', high: '🟠', mid: '🔵', low: '⚫' };
-      let text = `📋 今日のタスク（${today}）\n\n`;
-      if (pending.length) {
-        text += '【未完了】\n';
-        text += pending.map(t => `${priLabel[t.priority]} ${t.name}`).join('\n');
-      }
-      if (done.length) {
-        text += '\n\n【完了済み】\n';
-        text += done.map(t => `✅ ${t.name}`).join('\n');
-      }
-      text += `\n\n完了: ${done.length}/${tasks.length}`;
-      return text;
+  if (action === 'list') {
+    const tasks = await getTasks(userId);
+    const pending = tasks.filter(t => !t.done);
+    const done    = tasks.filter(t => t.done);
+    let text = `📋 今日のタスク（${today}）\n\n`;
+    if (pending.length) {
+      text += '【未完了】\n';
+      text += pending.map(t => `${priLabel[t.priority]} ${t.name}`).join('\n');
+    }
+    if (done.length) {
+      text += '\n\n【完了済み】\n';
+      text += done.map(t => `✅ ${t.name}`).join('\n');
+    }
+    text += `\n\n完了: ${done.length}/${tasks.length}`;
+    return text;
+  }
+
+  if (action === 'add') {
+    if (!task_name) return 'タスク名を教えてください。';
+    await addTask(userId, task_name, priority || 'mid');
+    return `✅ タスクを追加しました！\n「${task_name}」`;
+  }
+
+  if (action === 'complete') {
+    if (!task_name) return '完了するタスク名を教えてください。';
+    const task = await completeTask(userId, task_name);
+    if (task) return `🎉 完了しました！\n「${task.name}」\nお疲れ様！`;
+    return `「${task_name}」に一致するタスクが見つかりませんでした。`;
+  }
+}
+
+// 習慣エージェント — Claude不要、DBだけで完結
+async function habitAgent(userId, input) {
+  const today = todayStr();
+  const { action, run_km, run_min, sleep_h, weight_kg, cal_kcal, sim_min } = input;
+
+  if (action === 'log') {
+    const habitData = {};
+    if (run_km != null)    habitData.run_km    = run_km;
+    if (run_min != null)   habitData.run_min   = run_min;
+    if (sleep_h != null)   habitData.sleep_h   = sleep_h;
+    if (weight_kg != null) habitData.weight_kg = weight_kg;
+    if (cal_kcal != null)  habitData.cal_kcal  = cal_kcal;
+    if (sim_min != null)   habitData.sim_min   = sim_min;
+
+    if (Object.keys(habitData).length === 0) {
+      return '記録する値が見つかりませんでした。\n例: 走行4.5km 45min 睡眠7h 体重66kg';
     }
 
-    case 'task_add': {
-      await addTask(userId, cmd.name);
-      return `✅ タスクを追加しました！\n「${cmd.name}」`;
-    }
+    const rec = await saveHabit(userId, today, habitData);
+    let text = `📊 ${today} の記録を保存しました！\n\n`;
+    if (rec?.run_km)    text += `🏃 走行: ${rec.run_km}km${rec.run_min ? ` / ${rec.run_min}min` : ''}\n`;
+    if (rec?.sleep_h)   text += `🌙 睡眠: ${rec.sleep_h}h\n`;
+    if (rec?.weight_kg) text += `⚖️ 体重: ${rec.weight_kg}kg\n`;
+    if (rec?.cal_kcal)  text += `🍱 カロリー: ${rec.cal_kcal}kcal\n`;
+    if (rec?.sim_min)   text += `🎮 シミュレーター: ${rec.sim_min}min\n`;
+    return text.trim();
+  }
 
-    case 'task_done': {
-      const task = await completeTask(userId, cmd.name);
-      if (task) return `🎉 完了しました！\n「${task.name}」\nお疲れ様！`;
-      return `「${cmd.name}」に一致するタスクが見つかりませんでした。`;
-    }
+  if (action === 'view') {
+    const rec = await getHabit(userId, today);
+    if (!rec) return `📊 今日（${today}）はまだ記録がありません。\n\n例: 走行4.5km 45min 睡眠7h 体重66kg`;
+    let text = `📊 今日（${today}）の記録\n\n`;
+    if (rec.run_km)    text += `🏃 走行: ${rec.run_km}km${rec.run_min ? ` / ${rec.run_min}min` : ''}\n`;
+    if (rec.sleep_h)   text += `🌙 睡眠: ${rec.sleep_h}h\n`;
+    if (rec.weight_kg) text += `⚖️ 体重: ${rec.weight_kg}kg\n`;
+    if (rec.cal_kcal)  text += `🍱 カロリー: ${rec.cal_kcal}kcal\n`;
+    if (rec.sim_min)   text += `🎮 シミュレーター: ${rec.sim_min}min\n`;
+    return text.trim();
+  }
+}
 
-    case 'habit_log': {
-      const rec = await saveHabit(userId, today, cmd.data);
-      let text = `📊 ${today} の記録を保存しました！\n\n`;
-      if (rec?.run_km)    text += `🏃 走行: ${rec.run_km}km${rec.run_min ? ` / ${rec.run_min}min` : ''}\n`;
-      if (rec?.sleep_h)   text += `🌙 睡眠: ${rec.sleep_h}h\n`;
-      if (rec?.weight_kg) text += `⚖️ 体重: ${rec.weight_kg}kg\n`;
-      if (rec?.cal_kcal)  text += `🍱 カロリー: ${rec.cal_kcal}kcal\n`;
-      if (rec?.sim_min)   text += `🎮 シミュレーター: ${rec.sim_min}min\n`;
-      return text.trim();
-    }
+// 分析エージェント — Sonnetで高品質な分析
+async function analysisAgent(userId) {
+  const week = await getLast7Habits(userId);
+  if (!week.length) return '直近7日間のデータがありません。\nまず記録をつけてから分析してください！';
 
-    case 'habit_today': {
-      const rec = await getHabit(userId, today);
-      if (!rec) return `📊 今日（${today}）はまだ記録がありません。\n\n例: 記録 走行4.5km 45min 睡眠7h 体重66kg`;
-      let text = `📊 今日（${today}）の記録\n\n`;
-      if (rec.run_km)    text += `🏃 走行: ${rec.run_km}km${rec.run_min ? ` / ${rec.run_min}min` : ''}\n`;
-      if (rec.sleep_h)   text += `🌙 睡眠: ${rec.sleep_h}h\n`;
-      if (rec.weight_kg) text += `⚖️ 体重: ${rec.weight_kg}kg\n`;
-      if (rec.cal_kcal)  text += `🍱 カロリー: ${rec.cal_kcal}kcal\n`;
-      if (rec.sim_min)   text += `🎮 シミュレーター: ${rec.sim_min}min\n`;
-      return text.trim();
-    }
+  const avg = f => {
+    const v = week.map(h => h[f]).filter(x => x != null);
+    return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : '—';
+  };
+  const summary = week.map(r =>
+    `${r.date}: 走行${r.run_km ?? '—'}km(${r.run_min ?? '—'}min), 睡眠${r.sleep_h ?? '—'}h, 体重${r.weight_kg ?? '—'}kg, カロリー${r.cal_kcal ?? '—'}kcal, シミュ${r.sim_min ?? '—'}min`
+  ).join('\n');
 
-    case 'analysis': {
-      const week = await getLast7Habits(userId);
-      if (!week.length) return '直近7日間のデータがありません。\nまず記録をつけてから分析してください！';
-      const avg = f => {
-        const v = week.map(h => h[f]).filter(x => x != null);
-        return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : '—';
-      };
-      const summary = week.map(r =>
-        `${r.date}: 走行${r.run_km ?? '—'}km(${r.run_min ?? '—'}min), 睡眠${r.sleep_h ?? '—'}h, 体重${r.weight_kg ?? '—'}kg, カロリー${r.cal_kcal ?? '—'}kcal, シミュ${r.sim_min ?? '—'}min`
-      ).join('\n');
-      const prompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のフィジカルコーチです。以下の直近7日間のデータを分析してください。\n\n${summary}\n\n平均: ランニング${avg('run_km')}km/日, 睡眠${avg('sleep_h')}h/日\n\n1.今週の総評(2文) 2.良かった点 3.改善点 4.来週のアドバイス3つ を簡潔に日本語で。LINEなので短めに。`;
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 800,
-        messages: [{ role: 'user', content: prompt }],
-      });
-      return response.content[0].text;
-    }
+  const prompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のフィジカルコーチです。以下の直近7日間のデータを分析してください。\n\n${summary}\n\n平均: ランニング${avg('run_km')}km/日, 睡眠${avg('sleep_h')}h/日\n\n1.今週の総評(2文) 2.良かった点 3.改善点 4.来週のアドバイス3つ を簡潔に日本語で。LINEなので短めに。`;
 
-    case 'app_url':
-      return `📱 KOUTA OS はこちら！\nhttps://line-claude-bot-yznu.onrender.com/app\n\nTo-do・習慣記録・グラフ・AI分析が使えます。`;
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 800,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return res.content[0].text;
+}
 
-    case 'help':
-      return `❓ 使い方\n\n【タスク】\n・タスク → 今日の一覧\n・追加 [名前] → タスク追加\n・完了 [名前] → タスク完了\n\n【習慣記録】\n・記録 走行4.5km 45min 睡眠7h 体重66kg\n・今日の記録 → 確認\n\n【AI分析】\n・分析 → 今週の習慣を分析\n\n【その他】\n・自由に話しかけるとコーチが返信します！`;
+// インフォエージェント — 静的応答、Claude不要
+function infoAgent(type) {
+  if (type === 'app_url') {
+    return `📱 KOUTA OS はこちら！\nhttps://line-claude-bot-yznu.onrender.com/app\n\nTo-do・習慣記録・グラフ・AI分析が使えます。`;
+  }
+  if (type === 'help') {
+    return `❓ 使い方\n\n【タスク】\n・「今日のタスク」→ 一覧\n・「〇〇を追加」→ タスク追加\n・「〇〇が終わった」→ 完了\n\n【習慣記録】\n・「走行4.5km 45min 睡眠7h 体重66kg」\n・「今日の記録見せて」→ 確認\n\n【AI分析】\n・「今週どうだった？」→ 週次分析\n\n【その他】\n・自由に話しかけるとコーチが返信します！`;
+  }
+}
 
-    case 'chat':
-    default: {
-      if (!conversationHistory[userId]) conversationHistory[userId] = [];
-      const todayRec = await getHabit(userId, today);
-      const tasks = await getTasks(userId);
-      const pendingTasks = tasks.filter(t => !t.done).map(t => t.name).join('、');
-      const systemPrompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のパーソナルコーチ兼アシスタントです。コウタさんについて:
+// コーチエージェント — Sonnetでコンテキストを持った会話
+async function coachAgent(userId, userMessage) {
+  const today = todayStr();
+  if (!conversationHistory[userId]) conversationHistory[userId] = [];
+
+  // コンテキスト取得（並列）
+  const [todayRec, tasks] = await Promise.all([
+    getHabit(userId, today),
+    getTasks(userId),
+  ]);
+  const pendingTasks = tasks.filter(t => !t.done).map(t => t.name).join('、');
+
+  const systemPrompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のパーソナルコーチ兼アシスタントです。コウタさんについて:
 - 毎朝7時頃起床、4.5kmランニングして出社
 - J's Racingというホンダ系チューニングショップのオーナー兼マネージャー
 - FIA F4レーシングドライバーとして活動中
@@ -237,22 +339,22 @@ async function handleCommand(cmd, userId, originalMsg) {
 - 未完了タスク: ${pendingTasks || 'なし'}
 - 今日の記録: ${todayRec ? `走行${todayRec.run_km ?? '—'}km, 睡眠${todayRec.sleep_h ?? '—'}h, 体重${todayRec.weight_kg ?? '—'}kg` : 'まだなし'}
 
-ユーザーのメッセージの言語を自動判定し、同じ言語で返答してください。日本語なら日本語、ベトナム語ならベトナム語、英語なら英語で。LINEなので短めに簡潔に。`;
-      conversationHistory[userId].push({ role: 'user', content: originalMsg });
-      if (conversationHistory[userId].length > 20) {
-        conversationHistory[userId] = conversationHistory[userId].slice(-20);
-      }
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: conversationHistory[userId],
-      });
-      const replyText = response.content[0].text;
-      conversationHistory[userId].push({ role: 'assistant', content: replyText });
-      return replyText;
-    }
+ユーザーのメッセージの言語を自動判定し、同じ言語で返答してください。LINEなので短めに簡潔に。`;
+
+  conversationHistory[userId].push({ role: 'user', content: userMessage });
+  if (conversationHistory[userId].length > 20) {
+    conversationHistory[userId] = conversationHistory[userId].slice(-20);
   }
+
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1000,
+    system: systemPrompt,
+    messages: conversationHistory[userId],
+  });
+  const replyText = res.content[0].text;
+  conversationHistory[userId].push({ role: 'assistant', content: replyText });
+  return replyText;
 }
 
 // ===== サーバー =====
@@ -292,8 +394,7 @@ async function handleEvent(event) {
   const userId = event.source.userId;
   const userMessage = event.message.text;
   try {
-    const cmd = parseCommand(userMessage);
-    const replyText = await handleCommand(cmd, userId, userMessage);
+    const replyText = await orchestrate(userId, userMessage);
     await lineClient.replyMessage({
       replyToken: event.replyToken,
       messages: [{ type: 'text', text: replyText }],
