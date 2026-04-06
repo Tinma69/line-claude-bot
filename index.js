@@ -378,7 +378,17 @@ const WEB_ORCHESTRATOR_TOOLS = [
   },
 ];
 
-async function webOrchestrate(message, tasks = [], habits = []) {
+// 会話履歴をAnthropic形式に変換（現在のメッセージは含まない）
+function toAnthropicHistory(history, currentMessage) {
+  const messages = history
+    .filter(m => m.role === 'user' || m.role === 'ai')
+    .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
+  messages.push({ role: 'user', content: currentMessage });
+  return messages;
+}
+
+async function webOrchestrate(message, tasks = [], habits = [], history = []) {
+  // ルーティングは現在のメッセージだけで判断（Haiku・高速）
   const res = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 200,
@@ -391,12 +401,13 @@ async function webOrchestrate(message, tasks = [], habits = []) {
   const toolUse = res.content.find(c => c.type === 'tool_use');
   const agentName = toolUse?.name || 'coach_agent';
 
-  if (agentName === 'analysis_agent') return webAnalysisAgent(message, habits);
-  if (agentName === 'task_agent')     return webTaskAgent(message, tasks);
-  return webCoachAgent(message, tasks, habits);
+  // 各エージェントには会話履歴を渡す
+  if (agentName === 'analysis_agent') return webAnalysisAgent(message, habits, history);
+  if (agentName === 'task_agent')     return webTaskAgent(message, tasks, history);
+  return webCoachAgent(message, tasks, habits, history);
 }
 
-async function webAnalysisAgent(message, habits) {
+async function webAnalysisAgent(message, habits, history) {
   if (!habits.length) return 'LOGタブでデータを入力してから分析してください。';
 
   const today = new Date();
@@ -417,31 +428,33 @@ async function webAnalysisAgent(message, habits) {
     `${r.date}: 走行${r.runKm ?? '—'}km(${r.runMin ?? '—'}min), 睡眠${r.sleepH ?? '—'}h, 体重${r.weightKg ?? '—'}kg, カロリー${r.calKcal ?? '—'}kcal, シミュ${r.simMin ?? '—'}min`
   ).join('\n');
 
-  const prompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のフィジカルコーチです。\n\n直近7日のデータ:\n${summary}\n\n平均: ランニング${avg('runKm')}km/日, 睡眠${avg('sleepH')}h/日\n\nユーザーの質問: ${message}\n\n簡潔に日本語で答えてください。`;
+  const systemPrompt = `あなたはFIA F4レーシングドライバー兼カーショップオーナーのコウタさん専属のフィジカルコーチです。\n\n直近7日のデータ:\n${summary}\n\n平均: ランニング${avg('runKm')}km/日, 睡眠${avg('sleepH')}h/日\n\n簡潔に日本語で答えてください。`;
 
   const res = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
-    messages: [{ role: 'user', content: prompt }],
+    system: systemPrompt,
+    messages: toAnthropicHistory(history, message),
   });
   return res.content[0].text;
 }
 
-async function webTaskAgent(message, tasks) {
+async function webTaskAgent(message, tasks, history) {
   const pending = tasks.filter(t => !t.done).map(t => `[${t.priority}] ${t.name}`).join('\n') || 'なし';
   const done    = tasks.filter(t => t.done).map(t => t.name).join('\n') || 'なし';
 
-  const prompt = `あなたはコウタさん専属のコーチです。\n\n今日のタスク:\n【未完了】\n${pending}\n【完了済み】\n${done}\n\nユーザーの質問: ${message}\n\n簡潔に日本語で答えてください。`;
+  const systemPrompt = `あなたはコウタさん専属のコーチです。\n\n今日のタスク:\n【未完了】\n${pending}\n【完了済み】\n${done}\n\n簡潔に日本語で答えてください。`;
 
   const res = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 600,
-    messages: [{ role: 'user', content: prompt }],
+    system: systemPrompt,
+    messages: toAnthropicHistory(history, message),
   });
   return res.content[0].text;
 }
 
-async function webCoachAgent(message, tasks, habits) {
+async function webCoachAgent(message, tasks, habits, history) {
   const today = new Date().toISOString().split('T')[0];
   const todayHabit = habits.find(h => h.date === today);
   const pendingTasks = tasks.filter(t => !t.done).map(t => t.name).join('、') || 'なし';
@@ -462,7 +475,7 @@ async function webCoachAgent(message, tasks, habits) {
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
     system: systemPrompt,
-    messages: [{ role: 'user', content: message }],
+    messages: toAnthropicHistory(history, message),
   });
   return res.content[0].text;
 }
@@ -492,8 +505,8 @@ app.post('/api/analyze', express.json(), async (req, res) => {
 // Webアプリ用チャットエンドポイント（マルチエージェント）
 app.post('/api/chat', express.json(), async (req, res) => {
   try {
-    const { message, tasks = [], habits = [] } = req.body;
-    const text = await webOrchestrate(message, tasks, habits);
+    const { message, tasks = [], habits = [], history = [] } = req.body;
+    const text = await webOrchestrate(message, tasks, habits, history);
     res.json({ text });
   } catch (err) {
     res.status(500).json({ error: err.message });
