@@ -6,31 +6,74 @@
 <title>KOUTA OS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/htm@3.1.1/dist/htm.js"></script>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body { background: #080808; color: #efefef; font-family: 'Noto Sans JP', sans-serif; }
-  input, select { -webkit-appearance: none; }
+  html, body { height: 100%; }
+  body { background: #080808; color: #efefef; font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  input, select, textarea { -webkit-appearance: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <div id="root"></div>
-
-<script type="text/babel">
+<script>
 const { useState, useEffect, useRef } = React;
+const html = htm.bind(React.createElement);
 
 const TKEY = "kos_tasks_v4";
 const HKEY = "kos_habit_v4";
 const DKEY = "kos_date_v4";
+const RKEY = "kos_race_v1";
+const BKEY = "kos_race_backups_v1";
+const MAX_BACKUPS = 20;
+
+function autoBackup(data) {
+  if(!data||!data.length) return;
+  const backups=JSON.parse(localStorage.getItem(BKEY)||"[]");
+  const dates=[...new Set(data.map(d=>d.date))].sort();
+  const circuits=[...new Set(data.map(d=>d.circuit))];
+  const summary=dates.length<=3?dates.join(", "):dates[0]+"〜"+dates[dates.length-1]+" ("+dates.length+"日分)";
+  const entry={
+    id:Date.now(),
+    timestamp:new Date().toLocaleString("ja-JP"),
+    count:data.length,
+    summary,
+    circuits:circuits.join(", "),
+    data
+  };
+  backups.unshift(entry);
+  if(backups.length>MAX_BACKUPS) backups.length=MAX_BACKUPS;
+  localStorage.setItem(BKEY,JSON.stringify(backups));
+}
+function getBackups(){ return JSON.parse(localStorage.getItem(BKEY)||"[]"); }
+function deleteBackup(id){
+  const b=getBackups().filter(x=>x.id!==id);
+  localStorage.setItem(BKEY,JSON.stringify(b));
+  return b;
+}
 
 const C = {
   bg:"#080808", s1:"#111", s2:"#191919", s3:"#222",
   border:"#262626", text:"#efefef", muted:"#3a3a3a", muted2:"#666",
   run:"#ff3a3a", sleep:"#3d8eff", weight:"#9f7aea", cal:"#f97316", sim:"#10b981",
+  race:"#f59e0b",
 };
 const priColor = { must:C.run, high:C.cal, mid:C.sleep, low:C.muted };
+const SESSION_COLORS = { practice: C.sim, qualifying: C.sleep, race: C.run };
+const SESSION_LABELS = { practice: "練習", qualifying: "予選", race: "レース" };
+const COND_COLORS = { dry: C.cal, damp: C.race, wet: C.sleep };
+const COND_LABELS = { dry: "ドライ", damp: "セミウェット", wet: "ウェット" };
+const COMMON_CIRCUITS = ["鈴鹿","富士スピードウェイ","筑波サーキット","もてぎ","オートポリス","岡山国際サーキット","袖ヶ浦フォレストレースウェイ","セントラルサーキット","スポーツランドSUGO","モナコ","スパ・フランコルシャン","ニュルブルクリンク","シルバーストーン","モンツァ","バルセロナ","ラグナセカ","ブランズハッチ","ポール・リカール","ル・マン"];
+const CIRCUIT_LAP_KM = {
+  "鈴鹿":5.807,"富士スピードウェイ":4.563,"筑波サーキット":2.045,"もてぎ":4.801,
+  "オートポリス":4.674,"岡山国際サーキット":3.703,"袖ヶ浦フォレストレースウェイ":2.436,
+  "セントラルサーキット":2.093,"スポーツランドSUGO":3.704,
+  "モナコ":3.337,"スパ・フランコルシャン":7.004,"ニュルブルクリンク":5.148,
+  "シルバーストーン":5.891,"モンツァ":5.793,"バルセロナ":4.675,
+  "ラグナセカ":3.602,"ブランズハッチ":4.206,"ポール・リカール":5.791,"ル・マン":13.626,
+};
 
 const DEFAULT_TASKS = [
   {id:1,name:"起床 7:30",priority:"must",time:"07:30",cat:"private",done:false},
@@ -40,360 +83,977 @@ const DEFAULT_TASKS = [
   {id:5,name:"会社アパレル業務",priority:"mid",time:"",cat:"work",done:false},
   {id:6,name:"レーシングシミュレーター",priority:"low",time:"",cat:"private",done:false},
 ];
-
 const PRESET_HABITS = [
   { date:"2026-03-30", runKm:4.5, runMin:45, sleepH:7, weightKg:66.2, simMin:null, calKcal:null, calMemo:"" }
 ];
 
 function dateStr(d) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 }
 function todayStr() { return dateStr(new Date()); }
 
+function parseLap(s) {
+  if (!s||!s.trim()) return Infinity;
+  // ZAP SPEED形式 47'10 → 47.10 に変換
+  let t=s.trim().replace(/'/g,".");
+  const parts=t.split(":");
+  if(parts.length===2) return (parseInt(parts[0])||0)*60000+(parseFloat(parts[1])||0)*1000;
+  return (parseFloat(t)||0)*1000;
+}
+function isOutInLap(lap) {
+  const n=String(lap.num||"").trim().toUpperCase();
+  return n==="OUT"||n==="IN";
+}
+function getBest(laps) {
+  if(!laps||!laps.length) return null;
+  return laps.reduce((b,l)=>parseLap(l)<parseLap(b)?l:b);
+}
+
 function MiniBar({ data, color, height=90 }) {
-  const max = Math.max(...data.map(d => d.val||0), 1);
-  return (
-    <div style={{display:"flex",alignItems:"flex-end",gap:3,height:height+20}}>
-      {data.map((d,i) => (
-        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-          <div style={{width:"100%",height:d.val?Math.max(4,(d.val/max)*height):4,background:d.val?color+"44":C.s3,border:d.val?`1px solid ${color}`:"none",borderRadius:4}}/>
-          <div style={{fontSize:9,color:C.muted2}}>{d.label}</div>
-        </div>
-      ))}
-    </div>
-  );
+  const max = Math.max(...data.map(d=>d.val||0), 1);
+  return html`<div style=${{display:"flex",alignItems:"flex-end",gap:3,height:height+20}}>
+    ${data.map((d,i)=>{
+      const h2=d.val?Math.max(4,(d.val/max)*height):4;
+      const bg=d.val?color+"44":C.s3;
+      const bd=d.val?"1px solid "+color:"none";
+      return html`<div key=${i} style=${{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+        <div style=${{width:"100%",height:h2,background:bg,border:bd,borderRadius:4}}/>
+        <div style=${{fontSize:9,color:C.muted2}}>${d.label}</div>
+      </div>`;
+    })}
+  </div>`;
 }
 
 function MiniLine({ data, color, height=90 }) {
-  const vals = data.map(d => d.val);
-  const max = Math.max(...vals.filter(Boolean), 1);
-  const min = Math.min(...vals.filter(Boolean).concat([0]));
-  const range = max-min||1;
-  const W=260, H=height;
-  const points = data.map((d,i)=>({x:(i/(data.length-1))*W, y:d.val!=null?H-((d.val-min)/range)*H:null}));
-  const linePts = points.filter(p=>p.y!=null);
-  const path = linePts.length>1?"M "+linePts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L "):"";
-  return (
-    <div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H+4}`} style={{overflow:"visible",display:"block"}}>
-        {path&&<path d={path} stroke={color} strokeWidth="2" fill="none" strokeLinecap="round"/>}
-        {points.map((p,i)=>p.y!=null&&<circle key={i} cx={p.x} cy={p.y} r="4" fill={color}/>)}
-      </svg>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
-        {data.map((d,i)=><div key={i} style={{fontSize:9,color:C.muted2}}>{d.label}</div>)}
-      </div>
+  const vals=data.map(d=>d.val);
+  const max=Math.max(...vals.filter(Boolean),1);
+  const min=Math.min(...vals.filter(Boolean).concat([0]));
+  const range=max-min||1;
+  const W=260,H=height;
+  const points=data.map((d,i)=>({x:(i/(data.length-1))*W,y:d.val!=null?H-((d.val-min)/range)*H:null}));
+  const linePts=points.filter(p=>p.y!=null);
+  const path=linePts.length>1?"M "+linePts.map(p=>p.x.toFixed(1)+","+p.y.toFixed(1)).join(" L "):"";
+  const vb="0 0 "+W+" "+(H+4);
+  return html`<div>
+    <svg width="100%" viewBox=${vb} style=${{overflow:"visible",display:"block"}}>
+      ${path&&html`<path d=${path} stroke=${color} strokeWidth="2" fill="none" strokeLinecap="round"/>`}
+      ${points.map((p,i)=>p.y!=null&&html`<circle key=${i} cx=${p.x} cy=${p.y} r="4" fill=${color}/>`)}
+    </svg>
+    <div style=${{display:"flex",justifyContent:"space-between",marginTop:4}}>
+      ${data.map((d,i)=>html`<div key=${i} style=${{fontSize:9,color:C.muted2}}>${d.label}</div>`)}
     </div>
-  );
+  </div>`;
 }
 
 function CalendarPicker({ habits, selectedDate, onSelect }) {
-  const [viewYear, setViewYear] = useState(new Date().getFullYear());
-  const [viewMonth, setViewMonth] = useState(new Date().getMonth());
-  const recordedDates = new Set(habits.map(h=>h.date));
-  const today = todayStr();
-  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
-  const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate();
-  const prevMonth = () => { if(viewMonth===0){setViewYear(y=>y-1);setViewMonth(11);}else setViewMonth(m=>m-1); };
-  const nextMonth = () => { if(viewMonth===11){setViewYear(y=>y+1);setViewMonth(0);}else setViewMonth(m=>m+1); };
-  const cells = [];
+  const [viewYear,setViewYear]=useState(new Date().getFullYear());
+  const [viewMonth,setViewMonth]=useState(new Date().getMonth());
+  const recordedDates=new Set(habits.map(h=>h.date));
+  const today=todayStr();
+  const firstDay=new Date(viewYear,viewMonth,1).getDay();
+  const daysInMonth=new Date(viewYear,viewMonth+1,0).getDate();
+  const prevMonth=()=>{if(viewMonth===0){setViewYear(y=>y-1);setViewMonth(11);}else setViewMonth(m=>m-1);};
+  const nextMonth=()=>{if(viewMonth===11){setViewYear(y=>y+1);setViewMonth(0);}else setViewMonth(m=>m+1);};
+  const cells=[];
   for(let i=0;i<firstDay;i++) cells.push(null);
   for(let d=1;d<=daysInMonth;d++) cells.push(d);
-  const weeks = ["日","月","火","水","木","金","土"];
-  return (
-    <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-        <button onClick={prevMonth} style={{background:"none",border:"none",color:C.text,fontSize:18,cursor:"pointer",padding:"0 8px"}}>‹</button>
-        <div style={{fontSize:13,fontWeight:700}}>{viewYear}年{viewMonth+1}月</div>
-        <button onClick={nextMonth} style={{background:"none",border:"none",color:C.text,fontSize:18,cursor:"pointer",padding:"0 8px"}}>›</button>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:4}}>
-        {weeks.map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?C.run:i===6?C.sleep:C.muted2,padding:"3px 0"}}>{w}</div>)}
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-        {cells.map((d,i)=>{
-          if(!d) return <div key={i}/>;
-          const ds=`${viewYear}-${String(viewMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-          const isToday=ds===today, isSelected=ds===selectedDate, hasRecord=recordedDates.has(ds), isFuture=ds>today;
-          return (
-            <div key={i} onClick={()=>!isFuture&&onSelect(ds)}
-              style={{textAlign:"center",fontSize:12,padding:"6px 2px",borderRadius:7,cursor:isFuture?"default":"pointer",background:isSelected?"#fff":isToday?C.s3:"transparent",color:isSelected?"#000":isFuture?C.muted:C.text,border:isToday&&!isSelected?`1px solid ${C.muted2}`:"1px solid transparent",position:"relative"}}>
-              {d}
-              {hasRecord&&!isSelected&&<div style={{position:"absolute",bottom:2,left:"50%",transform:"translateX(-50%)",width:4,height:4,borderRadius:"50%",background:C.sim}}/>}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{fontSize:10,color:C.muted2,marginTop:8,textAlign:"center"}}>🟢 記録あり　白丸 = 今日</div>
+  const weeks=["日","月","火","水","木","金","土"];
+  return html`<div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:14,marginBottom:14}}>
+    <div style=${{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+      <button onClick=${prevMonth} style=${{background:"none",border:"none",color:C.text,fontSize:18,cursor:"pointer",padding:"0 8px"}}>‹</button>
+      <div style=${{fontSize:13,fontWeight:700}}>${viewYear}年${viewMonth+1}月</div>
+      <button onClick=${nextMonth} style=${{background:"none",border:"none",color:C.text,fontSize:18,cursor:"pointer",padding:"0 8px"}}>›</button>
     </div>
-  );
+    <div style=${{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:4}}>
+      ${weeks.map((w,i)=>html`<div key=${w} style=${{textAlign:"center",fontSize:10,color:i===0?C.run:i===6?C.sleep:C.muted2,padding:"3px 0"}}>${w}</div>`)}
+    </div>
+    <div style=${{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+      ${cells.map((d,i)=>{
+        if(!d) return html`<div key=${i}/>`;
+        const ds=viewYear+"-"+String(viewMonth+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+        const isToday=ds===today,isSelected=ds===selectedDate,hasRecord=recordedDates.has(ds),isFuture=ds>today;
+        const bg=isSelected?"#fff":isToday?C.s3:"transparent";
+        const col=isSelected?"#000":isFuture?C.muted:C.text;
+        const bd=isToday&&!isSelected?"1px solid "+C.muted2:"1px solid transparent";
+        return html`<div key=${i} onClick=${()=>!isFuture&&onSelect(ds)}
+          style=${{textAlign:"center",fontSize:12,padding:"6px 2px",borderRadius:7,cursor:isFuture?"default":"pointer",background:bg,color:col,border:bd,position:"relative"}}>
+          ${d}
+          ${hasRecord&&!isSelected&&html`<div style=${{position:"absolute",bottom:2,left:"50%",transform:"translateX(-50%)",width:4,height:4,borderRadius:"50%",background:C.sim}}/>`}
+        </div>`;
+      })}
+    </div>
+    <div style=${{fontSize:10,color:C.muted2,marginTop:8,textAlign:"center"}}>🟢 記録あり　白丸 = 今日</div>
+  </div>`;
 }
 
-function App() {
-  const [tab, setTab] = useState("today");
-  const [tasks, setTasks] = useState([]);
-  const [habits, setHabits] = useState([]);
-  const [newTask, setNewTask] = useState("");
-  const [newPri, setNewPri] = useState("mid");
-  const [selectedDate, setSelectedDate] = useState(todayStr());
-  const [form, setForm] = useState({rKm:"",rMin:"",slH:"",wtKg:"",simMin:"",calKcal:"",calMemo:""});
-  const [saved, setSaved] = useState(false);
-  const [chatMessages, setChatMessages] = useState([
-    { role: "ai", text: "こんにちは、コウタさん！\n分析・タスク相談・雑談、何でも聞いてください 🏎️" }
-  ]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
-  const chatEndRef = useRef(null);
+function SegBtn({ options, value, onChange, color }) {
+  return html`<div style=${{display:"flex",gap:5}}>
+    ${options.map(o=>{
+      const active=value===o.v;
+      const bg=active?(color||"#fff"):C.s3;
+      const col=active?"#000":C.muted2;
+      const bd="1px solid "+(active?(color||C.text):C.border);
+      return html`<button key=${o.v} onClick=${()=>onChange(o.v)} style=${{flex:1,padding:"8px 0",fontSize:11,fontWeight:active?700:400,background:bg,color:col,border:bd,borderRadius:8,cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}}>${o.l}</button>`;
+    })}
+  </div>`;
+}
 
-  useEffect(() => {
-    let t = JSON.parse(localStorage.getItem(TKEY)||"null");
-    const sd = localStorage.getItem(DKEY);
-    const td = todayStr();
+// ---- RACE TAB ----
+
+function getBestObj(laps) {
+  // laps: [{num, time}] — OUT/INラップ（部分周回）は除外
+  if(!laps||!laps.length) return null;
+  const valid=laps.filter(l=>!isOutInLap(l));
+  if(!valid.length) return null;
+  return valid.reduce((b,l)=>parseLap(l.time)<parseLap(b.time)?l:b);
+}
+function getAllLaps(s) {
+  // support both new (sessions[]) and old (laps[]) format
+  if(s.sessions) return s.sessions.flatMap(ss=>ss.laps||[]);
+  return (s.laps||[]).map(l=>({num:"",time:l}));
+}
+function newSess(n) { return {id:Date.now()+n,label:"",driver:"",lapNum:"1",lapTime:"",laps:[],airTemp:"",trackTemp:"",p1:"",p2:"",p3:"",p4:""}; }
+
+function fileToBase64(file) {
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=e=>resolve(e.target.result.split(",")[1]);
+    r.onerror=reject;
+    r.readAsDataURL(file);
+  });
+}
+
+function RaceTab({ raceSessions, setRaceSessions }) {
+  const [subTab,setSubTab]=useState("input");
+  const [reportIds,setReportIds]=useState([]);
+  const [copied,setCopied]=useState(false);
+  const [form,setForm]=useState({date:todayStr(),type:"practice",circuit:"",car:"",driver:"",tireMileage:"",lapLengthKm:"",condition:"dry",sessions:[newSess(0)],qualPos:"",racePos:"",incidents:"",focus:"",notes:""});
+  const [saved,setSaved]=useState(false);
+  const [expanded,setExpanded]=useState(null);
+  const [scanning,setScanning]=useState(false);
+  const [scanError,setScanError]=useState("");
+  const scanInputRef=useRef(null);
+  const importInputRef=useRef(null);
+
+  const sf=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const addSession=()=>setForm(f=>({...f,sessions:[...f.sessions,newSess(f.sessions.length)]}));
+  const removeSession=(id)=>setForm(f=>({...f,sessions:f.sessions.filter(s=>s.id!==id)}));
+  const updSess=(id,changes)=>setForm(f=>({...f,sessions:f.sessions.map(s=>s.id===id?{...s,...changes}:s)}));
+
+  const handleScan=async(file)=>{
+    if(!file) return;
+    setScanning(true); setScanError("");
+    try {
+      const b64=await fileToBase64(file);
+      const mt=file.type||"image/jpeg";
+      const res=await fetch("/api/race-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mimeType:mt})});
+      if(!res.ok){ const err=await res.json().catch(()=>({})); throw new Error(err.error||"サーバーエラー: "+res.status); }
+      const d=await res.json();
+      if(d.error) throw new Error(d.error);
+      setForm(f=>{
+        const merged={...f};
+        if(d.date) merged.date=d.date;
+        if(d.circuit) merged.circuit=d.circuit;
+        if(d.car) merged.car=d.car;
+        if(d.sessions&&d.sessions.length){
+          merged.sessions=d.sessions.map((ss,i)=>({
+            id:Date.now()+i,
+            label:ss.label||"",
+            driver:ss.driver||"",
+            lapNum:"1",lapTime:"",
+            laps:(ss.laps||[]).map(l=>({num:String(l.num||""),time:l.time})),
+            airTemp:ss.airTemp!=null?String(ss.airTemp):"",
+            trackTemp:ss.trackTemp!=null?String(ss.trackTemp):"",
+            p1:ss.p1!=null?String(ss.p1):"",
+            p2:ss.p2!=null?String(ss.p2):"",
+            p3:ss.p3!=null?String(ss.p3):"",
+            p4:ss.p4!=null?String(ss.p4):"",
+          }));
+        }
+        return merged;
+      });
+    } catch(e){ setScanError(e.message||"読み込みに失敗しました"); }
+    finally { setScanning(false); if(scanInputRef.current) scanInputRef.current.value=""; }
+  };
+
+  const addLap=(sessId)=>{
+    setForm(f=>({...f,sessions:f.sessions.map(s=>{
+      if(s.id!==sessId) return s;
+      if(!s.lapTime.trim()) return s;
+      const lap={num:s.lapNum,time:s.lapTime.trim()};
+      const nextNum=String((parseInt(s.lapNum)||0)+1);
+      return{...s,laps:[...s.laps,lap],lapNum:nextNum,lapTime:""};
+    })}));
+  };
+  const removeLap=(sessId,li)=>setForm(f=>({...f,sessions:f.sessions.map(s=>s.id!==sessId?s:{...s,laps:s.laps.filter((_,i)=>i!==li)})}));
+  const updLapNum=(sessId,li,num)=>setForm(f=>({...f,sessions:f.sessions.map(s=>s.id!==sessId?s:{...s,laps:s.laps.map((l,i)=>i===li?{...l,num}:l)})}));
+
+  const overallBest=()=>getBestObj(form.sessions.flatMap(s=>s.laps));
+
+  const saveSession=()=>{
+    if(!form.circuit.trim()) return;
+    const best=overallBest();
+    const session={
+      id:Date.now(),date:form.date,type:form.type,circuit:form.circuit.trim(),car:form.car.trim(),
+      driver:form.driver.trim(),tireMileage:form.tireMileage?parseFloat(form.tireMileage):null,
+      lapLengthKm:form.lapLengthKm?parseFloat(form.lapLengthKm):null,
+      condition:form.condition,
+      sessions:form.sessions.map(s=>({id:s.id,label:s.label.trim(),driver:s.driver.trim(),laps:s.laps,bestLap:getBestObj(s.laps),airTemp:s.airTemp?parseFloat(s.airTemp):null,trackTemp:s.trackTemp?parseFloat(s.trackTemp):null,p1:s.p1?parseFloat(s.p1):null,p2:s.p2?parseFloat(s.p2):null,p3:s.p3?parseFloat(s.p3):null,p4:s.p4?parseFloat(s.p4):null})),
+      bestLap:best?best.time:null,bestLapNum:best?best.num:null,
+      qualPos:form.qualPos?parseInt(form.qualPos):null,racePos:form.racePos?parseInt(form.racePos):null,
+      incidents:form.incidents!==""?parseInt(form.incidents):null,focus:form.focus.trim(),notes:form.notes.trim()
+    };
+    const updated=[...raceSessions,session].sort((a,b)=>b.date>a.date?1:-1);
+    setRaceSessions(updated);
+    localStorage.setItem(RKEY,JSON.stringify(updated));
+    autoBackup(updated);
+    setSaved(true);
+    setTimeout(()=>setSaved(false),2500);
+    setForm(f=>({...f,sessions:[newSess(0)],qualPos:"",racePos:"",incidents:"",focus:"",notes:""}));
+  };
+
+  const deleteRecord=(id)=>{
+    const updated=raceSessions.filter(s=>s.id!==id);
+    setRaceSessions(updated);
+    localStorage.setItem(RKEY,JSON.stringify(updated));
+    if(expanded===id) setExpanded(null);
+  };
+
+  const [backups,setBackups]=useState(()=>getBackups());
+  const [showBackups,setShowBackups]=useState(false);
+
+  const exportData=()=>{
+    const json=JSON.stringify(raceSessions,null,2);
+    const blob=new Blob([json],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="kouta_os_race_backup_"+todayStr()+".json";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  const importData=(file)=>{
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      try{
+        const data=JSON.parse(e.target.result);
+        if(!Array.isArray(data)) throw new Error("invalid");
+        const merged=[...raceSessions];
+        const existIds=new Set(merged.map(s=>s.id));
+        let added=0;
+        for(const d of data){ if(!existIds.has(d.id)){ merged.push(d); added++; } }
+        merged.sort((a,b)=>b.date>a.date?1:-1);
+        setRaceSessions(merged);
+        localStorage.setItem(RKEY,JSON.stringify(merged));
+        alert(added+"件のデータをインポートしました（重複除外）");
+      }catch(err){ alert("ファイルの読み込みに失敗しました"); }
+      if(importInputRef.current) importInputRef.current.value="";
+    };
+    reader.readAsText(file);
+  };
+  const restoreBackup=(backup)=>{
+    if(!confirm(backup.timestamp+"のバックアップ（"+backup.count+"件）を復元しますか？\n現在のデータは上書きされます。")) return;
+    setRaceSessions(backup.data);
+    localStorage.setItem(RKEY,JSON.stringify(backup.data));
+    setShowBackups(false);
+  };
+  const removeBackup=(id)=>{
+    const updated=deleteBackup(id);
+    setBackups(updated);
+  };
+
+  const bestByCircuit=()=>{
+    const map={};
+    for(const s of raceSessions){
+      const all=getAllLaps(s);
+      const best=getBestObj(all);
+      if(!best) continue;
+      if(!map[s.circuit]||parseLap(best.time)<parseLap(map[s.circuit]._bestTime)){
+        map[s.circuit]={...s,_bestTime:best.time,_bestNum:best.num};
+      }
+    }
+    return Object.entries(map).sort((a,b)=>a[0]>b[0]?1:-1);
+  };
+  const sessionCounts=()=>{const map={};for(const s of raceSessions)map[s.circuit]=(map[s.circuit]||0)+1;return map;};
+  const totalLaps=()=>raceSessions.reduce((a,s)=>a+getAllLaps(s).length,0);
+
+  const inp={background:C.s2,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"};
+  const lbl={fontSize:9,color:C.muted2,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:5,display:"block"};
+
+  return html`<div style=${{padding:"14px 14px 0"}}>
+    <div style=${{display:"flex",gap:0,marginBottom:16,background:C.s1,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
+      ${[{id:"input",l:"⊕ 記録"},{id:"history",l:"📋 履歴"},{id:"best",l:"🏆 ベスト"},{id:"report",l:"📄 レポート"}].map(t=>html`
+        <button key=${t.id} onClick=${()=>setSubTab(t.id)} style=${{flex:1,padding:"10px 2px",fontSize:11,fontWeight:subTab===t.id?700:400,background:subTab===t.id?C.race:"transparent",color:subTab===t.id?"#000":C.muted2,border:"none",cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}}>${t.l}</button>
+      `)}
+    </div>
+
+    ${subTab==="input"&&html`<div>
+      <input ref=${scanInputRef} type="file" accept="image/*" style=${{display:"none"}} onChange=${e=>handleScan(e.target.files[0])}/>
+      <button onClick=${()=>scanInputRef.current&&scanInputRef.current.click()} disabled=${scanning} style=${{width:"100%",background:scanning?"#333":C.s2,border:"2px dashed "+(scanning?C.race:C.border),borderRadius:10,padding:"12px",color:scanning?C.race:C.muted2,fontSize:13,cursor:scanning?"not-allowed":"pointer",fontFamily:"inherit",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s"}}>
+        ${scanning?html`<span style=${{display:"inline-block",width:14,height:14,border:"2px solid "+C.race,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/>`:html`<span>📷</span>`}
+        ${scanning?"読み込み中...":"写真から自動入力"}
+      </button>
+      ${scanError&&html`<div style=${{background:"rgba(239,68,68,.1)",border:"1px solid #ef4444",borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:"#ef4444"}}>${scanError}</div>`}
+      <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div><label style=${lbl}>日付</label><input type="date" value=${form.date} onChange=${e=>sf("date",e.target.value)} style=${inp}/></div>
+        <div><label style=${lbl}>セッション種別</label><${SegBtn} options=${[{v:"practice",l:"練習"},{v:"qualifying",l:"予選"},{v:"race",l:"レース"}]} value=${form.type} onChange=${v=>sf("type",v)} color=${SESSION_COLORS[form.type]}/></div>
+      </div>
+      <div style=${{marginBottom:12}}>
+        <label style=${lbl}>サーキット</label>
+        <input list="circuits" value=${form.circuit} onChange=${e=>{const v=e.target.value;const km=CIRCUIT_LAP_KM[v];setForm(f=>({...f,circuit:v,lapLengthKm:km?String(km):f.lapLengthKm}));}} placeholder="例: 鈴鹿, 筑波..." style=${inp}/>
+        <datalist id="circuits">${COMMON_CIRCUITS.map(c=>html`<option key=${c} value=${c}/>`)}</datalist>
+        ${form.lapLengthKm&&html`<div style=${{fontSize:10,color:C.muted2,marginTop:4}}>📏 1周 ${form.lapLengthKm}km</div>`}
+      </div>
+      <div style=${{marginBottom:12}}>
+        <label style=${lbl}>車両 / カテゴリー</label>
+        <input value=${form.car} onChange=${e=>sf("car",e.target.value)} placeholder="例: GR86, GT3, F4..." style=${inp}/>
+      </div>
+      <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div>
+          <label style=${lbl}>ドライバー</label>
+          <input value=${form.driver} onChange=${e=>sf("driver",e.target.value)} placeholder="例: 山田 コウタ" style=${inp}/>
+        </div>
+        <div>
+          <label style=${lbl}>🛞 タイヤ開始km</label>
+          <input type="number" value=${form.tireMileage} onChange=${e=>sf("tireMileage",e.target.value)} placeholder="例: 82" style=${inp}/>
+        </div>
+      </div>
+      <div style=${{marginBottom:12}}>
+        <label style=${lbl}>コンディション</label>
+        <${SegBtn} options=${[{v:"dry",l:"ドライ"},{v:"damp",l:"セミウェット"},{v:"wet",l:"ウェット"}]} value=${form.condition} onChange=${v=>sf("condition",v)} color=${COND_COLORS[form.condition]}/>
+      </div>
+      <div style=${{marginBottom:14}}>
+        <div style=${{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <label style=${{...lbl,marginBottom:0}}>🏎 走行枠 (${form.sessions.length}本)</label>
+          <button onClick=${addSession} style=${{background:C.race,color:"#000",border:"none",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>＋ 枠追加</button>
+        </div>
+        ${form.sessions.map((sess,si)=>{
+          const best=getBestObj(sess.laps);
+          return html`<div key=${sess.id} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:12,marginBottom:8,position:"relative",overflow:"hidden"}}>
+            <div style=${{position:"absolute",top:0,left:0,right:0,height:3,background:C.race+"88"}}/>
+            <div style=${{display:"flex",gap:7,alignItems:"center",marginBottom:6}}>
+              <span style=${{background:C.race+"22",color:C.race,padding:"2px 8px",borderRadius:20,fontSize:10,fontWeight:700,flexShrink:0}}>S${si+1}</span>
+              <input placeholder="枠名（例: フリー走行1）" value=${sess.label} onChange=${e=>updSess(sess.id,{label:e.target.value})} style=${{...inp,flex:1,padding:"6px 10px",fontSize:11}}/>
+              ${form.sessions.length>1&&html`<button onClick=${()=>removeSession(sess.id)} style=${{background:"none",border:"none",color:C.muted2,fontSize:16,cursor:"pointer",padding:"0 4px",flexShrink:0}}>×</button>`}
+            </div>
+            <div style=${{display:"flex",alignItems:"center",gap:6,marginBottom:7,background:C.s2,border:"1px solid "+C.border,borderRadius:8,padding:"6px 10px"}}>
+              <span style=${{fontSize:11,flexShrink:0}}>👤</span>
+              <input placeholder="ドライバー名" value=${sess.driver} onChange=${e=>updSess(sess.id,{driver:e.target.value})} style=${{background:"none",border:"none",color:C.text,fontSize:12,width:"100%",outline:"none",fontFamily:"inherit"}}/>
+            </div>
+            <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+              <div style=${{display:"flex",alignItems:"center",gap:4,background:C.s2,border:"1px solid "+C.border,borderRadius:8,padding:"5px 9px"}}>
+                <span style=${{fontSize:10,color:C.muted2,flexShrink:0}}>🌡</span>
+                <input type="number" placeholder="気温°C" value=${sess.airTemp} onChange=${e=>updSess(sess.id,{airTemp:e.target.value})} style=${{background:"none",border:"none",color:C.text,fontSize:11,width:"100%",outline:"none",fontFamily:"inherit"}}/>
+              </div>
+              <div style=${{display:"flex",alignItems:"center",gap:4,background:C.s2,border:"1px solid "+C.border,borderRadius:8,padding:"5px 9px"}}>
+                <span style=${{fontSize:10,color:"#f97316",flexShrink:0}}>🔥</span>
+                <input type="number" placeholder="路面°C" value=${sess.trackTemp} onChange=${e=>updSess(sess.id,{trackTemp:e.target.value})} style=${{background:"none",border:"none",color:C.text,fontSize:11,width:"100%",outline:"none",fontFamily:"inherit"}}/>
+              </div>
+            </div>
+            <div style=${{marginBottom:6}}>
+              <div style=${{fontSize:9,color:C.muted2,marginBottom:4,letterSpacing:"0.08em"}}>内圧 (kPa)</div>
+              <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+                ${[{k:"p1",l:"FL",c:"#60a5fa"},{k:"p2",l:"FR",c:"#60a5fa"},{k:"p3",l:"RL",c:"#f87171"},{k:"p4",l:"RR",c:"#f87171"}].map(({k,l,c})=>html`
+                  <div key=${k} style=${{background:C.s2,border:"1px solid "+C.border,borderRadius:7,padding:"4px 8px",display:"flex",alignItems:"center",gap:4}}>
+                    <span style=${{fontSize:9,color:c,flexShrink:0,fontWeight:700,fontFamily:"'Bebas Neue',monospace"}}>${l}</span>
+                    <input type="number" step="1" placeholder="—" value=${sess[k]} onChange=${e=>updSess(sess.id,{[k]:e.target.value})} style=${{background:"none",border:"none",color:C.text,fontSize:12,width:"100%",outline:"none",fontFamily:"inherit"}}/>
+                  </div>
+                `)}
+              </div>
+            </div>
+            ${(()=>{
+              const validLaps=sess.laps.filter(l=>!isOutInLap(l)).length;
+              const lapKm=parseFloat(form.lapLengthKm)||0;
+              const startKm=parseFloat(form.tireMileage)||0;
+              const cumKmBefore=form.sessions.slice(0,si).reduce((a,ps)=>a+ps.laps.filter(l=>!isOutInLap(l)).length*lapKm,0);
+              const sessKm=validLaps*lapKm;
+              const totalKm=startKm+cumKmBefore+sessKm;
+              if(!lapKm||!validLaps) return null;
+              return html`<div style=${{background:"rgba(245,158,11,.07)",border:"1px solid rgba(245,158,11,.2)",borderRadius:7,padding:"5px 10px",marginBottom:7,display:"flex",gap:12,fontSize:10,color:C.muted2,flexWrap:"wrap"}}>
+                <span>📏 ${sessKm.toFixed(2)}km <span style=${{color:C.muted2,fontSize:9}}>(${validLaps}周)</span></span>
+                <span style=${{color:C.race}}>🛞 累計 ${totalKm.toFixed(1)}km</span>
+              </div>`;
+            })()}
+            <div style=${{display:"flex",gap:5,marginBottom:7}}>
+              <input type="number" placeholder="周" value=${sess.lapNum} onChange=${e=>updSess(sess.id,{lapNum:e.target.value})} style=${{...inp,width:52,padding:"8px 6px",textAlign:"center",fontSize:12}}/>
+              <input placeholder="1:32.456" value=${sess.lapTime} onChange=${e=>updSess(sess.id,{lapTime:e.target.value})} onKeyDown=${e=>e.key==="Enter"&&addLap(sess.id)} style=${{...inp,flex:1}}/>
+              <button onClick=${()=>addLap(sess.id)} style=${{background:C.race,color:"#000",border:"none",borderRadius:8,padding:"0 14px",fontSize:16,fontWeight:700,cursor:"pointer",flexShrink:0}}>+</button>
+            </div>
+            ${sess.laps.length>0?html`<div>
+              ${best&&html`<div style=${{background:"rgba(245,158,11,.1)",border:"1px solid "+C.race,borderRadius:7,padding:"5px 10px",marginBottom:6,display:"flex",alignItems:"center",gap:8}}>
+                <span style=${{fontSize:10,color:C.race}}>⚡ BEST</span>
+                ${best.num&&html`<span style=${{fontSize:10,color:C.muted2}}>${best.num}周目</span>`}
+                <span style=${{fontFamily:"'Bebas Neue',cursive",fontSize:18,color:C.race,letterSpacing:"0.05em"}}>${best.time}</span>
+                <span style=${{fontSize:9,color:C.muted2,marginLeft:"auto"}}>${sess.laps.length} laps</span>
+              </div>`}
+              <div style=${{display:"flex",flexDirection:"column",gap:3}}>
+                ${sess.laps.map((l,li)=>{
+                  const isExcluded=isOutInLap(l);
+                  const isBest=!isExcluded&&best&&parseLap(l.time)===parseLap(best.time);
+                  const bg=isExcluded?"rgba(239,68,68,.06)":isBest?"rgba(245,158,11,.08)":C.s2;
+                  const bd=isExcluded?"1px solid rgba(239,68,68,.3)":"1px solid "+(isBest?C.race:C.border);
+                  return html`<div key=${li} style=${{display:"flex",alignItems:"center",gap:6,padding:"4px 7px",background:bg,borderRadius:6,border:bd}}>
+                    <input value=${l.num} onChange=${e=>updLapNum(sess.id,li,e.target.value)} style=${{background:"none",border:"none",fontSize:10,color:isExcluded?"#ef4444":C.muted2,width:36,outline:"none",fontFamily:"inherit",textAlign:"center"}}/>
+                    <span style=${{fontFamily:"'Bebas Neue',cursive",fontSize:15,letterSpacing:"0.04em",flex:1,color:isExcluded?"#ef4444":isBest?C.race:C.text,opacity:isExcluded?0.5:1}}>${l.time}</span>
+                    ${isExcluded&&html`<span style=${{fontSize:9,color:"#ef4444"}}>除外</span>`}
+                    ${isBest&&html`<span style=${{fontSize:9,color:C.race}}>◆</span>`}
+                    <button onClick=${()=>removeLap(sess.id,li)} style=${{background:"none",border:"none",color:C.muted2,fontSize:13,cursor:"pointer",padding:"0 3px"}}>✕</button>
+                  </div>`;
+                })}
+              </div>
+            </div>`:html`<div style=${{textAlign:"center",color:C.muted2,fontSize:11,padding:"6px 0"}}>周回数とタイムを入力して + を押してください</div>`}
+          </div>`;
+        })}
+      </div>
+
+      ${(form.type==="qualifying"||form.type==="race")&&html`<div style=${{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        ${form.type==="race"&&html`<div><label style=${lbl}>予選順位</label><input type="number" placeholder="P1〜" value=${form.qualPos} onChange=${e=>sf("qualPos",e.target.value)} style=${inp}/></div>`}
+        <div style=${{gridColumn:form.type==="qualifying"?"span 2":""}}><label style=${lbl}>${form.type==="qualifying"?"予選順位":"決勝順位"}</label><input type="number" placeholder="P1〜" value=${form.racePos} onChange=${e=>sf("racePos",e.target.value)} style=${inp}/></div>
+        ${form.type==="race"&&html`<div><label style=${lbl}>インシデント</label><input type="number" placeholder="0" value=${form.incidents} onChange=${e=>sf("incidents",e.target.value)} style=${inp}/></div>`}
+      </div>`}
+      <div style=${{marginBottom:12}}>
+        <label style=${lbl}>今日の課題・テーマ</label>
+        <input value=${form.focus} onChange=${e=>sf("focus",e.target.value)} placeholder="例: ブレーキングポイント改善" style=${inp}/>
+      </div>
+      <div style=${{marginBottom:16}}>
+        <label style=${lbl}>振り返り・メモ</label>
+        <textarea value=${form.notes} onChange=${e=>sf("notes",e.target.value)} placeholder="セッションの感想、改善点、発見したことなど..." rows="3" style=${{...inp,resize:"vertical",lineHeight:1.7}}/>
+      </div>
+      <button onClick=${saveSession} disabled=${!form.circuit.trim()} style=${{width:"100%",background:saved?"#10b981":form.circuit.trim()?C.race:C.muted,color:"#000",border:"none",borderRadius:10,padding:13,fontSize:13,fontWeight:700,cursor:form.circuit.trim()?"pointer":"default",marginBottom:20,transition:"background .3s"}}>
+        ${saved?"✅ セッションを保存しました！":"🏁 セッションを記録する"}
+      </button>
+    </div>`}
+
+    ${subTab==="history"&&html`<div>
+      <input ref=${importInputRef} type="file" accept=".json" style=${{display:"none"}} onChange=${e=>importData(e.target.files[0])}/>
+      <div style=${{display:"flex",gap:8,marginBottom:10}}>
+        <button onClick=${exportData} disabled=${raceSessions.length===0} style=${{flex:1,background:C.s2,color:raceSessions.length?C.text:C.muted2,border:"1px solid "+C.border,borderRadius:8,padding:"9px",fontSize:11,cursor:raceSessions.length?"pointer":"default",fontFamily:"inherit"}}>💾 JSONダウンロード</button>
+        <button onClick=${()=>importInputRef.current&&importInputRef.current.click()} style=${{flex:1,background:C.s2,color:C.text,border:"1px solid "+C.border,borderRadius:8,padding:"9px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>📂 JSONから復元</button>
+      </div>
+      <button onClick=${()=>{setShowBackups(!showBackups);if(!showBackups)setBackups(getBackups());}} style=${{width:"100%",background:showBackups?C.race+"22":C.s1,color:showBackups?C.race:C.muted2,border:"1px solid "+(showBackups?C.race+"44":C.border),borderRadius:8,padding:"9px",fontSize:11,cursor:"pointer",fontFamily:"inherit",marginBottom:14,transition:"all .15s"}}>
+        ${showBackups?"▲ バックアップ一覧を閉じる":"🕐 自動バックアップ一覧（"+backups.length+"件）"}
+      </button>
+      ${showBackups&&html`<div style=${{marginBottom:14}}>
+        ${backups.length===0?html`<div style=${{textAlign:"center",padding:"20px",color:C.muted2,fontSize:12}}>自動バックアップはまだありません。記録を保存すると自動で作成されます。</div>`
+        :backups.map(b=>html`<div key=${b.id} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+          <div style=${{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+            <span style=${{fontSize:11,fontWeight:600}}>${b.timestamp}</span>
+            <span style=${{fontSize:10,color:C.muted2}}>${b.count}件</span>
+          </div>
+          <div style=${{fontSize:10,color:C.muted2,marginBottom:2}}>${b.summary}</div>
+          <div style=${{fontSize:10,color:C.muted2,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>${b.circuits}</div>
+          <div style=${{display:"flex",gap:6}}>
+            <button onClick=${()=>restoreBackup(b)} style=${{flex:1,background:C.race+"22",color:C.race,border:"1px solid "+C.race+"44",borderRadius:6,padding:"6px",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>復元する</button>
+            <button onClick=${()=>removeBackup(b.id)} style=${{background:"rgba(255,58,58,.08)",color:C.run,border:"1px solid rgba(255,58,58,.2)",borderRadius:6,padding:"6px 10px",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+          </div>
+        </div>`)}
+      </div>`}
+      ${raceSessions.length===0&&html`<div style=${{textAlign:"center",padding:"40px 0",color:C.muted2}}>
+        <div style=${{fontSize:32,marginBottom:10}}>🏁</div>
+        <div style=${{fontSize:13}}>まだ記録がありません</div>
+      </div>`}
+      ${raceSessions.map(s=>{
+        const isExp=expanded===s.id;
+        const typeColor=SESSION_COLORS[s.type];
+        const allLaps=getAllLaps(s);
+        const totalLapCount=allLaps.length;
+        return html`<div key=${s.id} style=${{background:C.s1,border:"1px solid "+(isExp?C.race:C.border),borderRadius:12,marginBottom:10,overflow:"hidden"}}>
+          <div onClick=${()=>setExpanded(isExp?null:s.id)} style=${{padding:"12px 13px",cursor:"pointer",display:"flex",alignItems:"flex-start",gap:10}}>
+            <div style=${{width:3,alignSelf:"stretch",background:typeColor,borderRadius:2,flexShrink:0}}/>
+            <div style=${{flex:1}}>
+              <div style=${{display:"flex",alignItems:"center",gap:6,marginBottom:5,flexWrap:"wrap"}}>
+                <span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:typeColor+"22",color:typeColor,fontWeight:700}}>${SESSION_LABELS[s.type]}</span>
+                <span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:C.s3,color:C.muted2}}>${COND_LABELS[s.condition]}</span>
+                ${(()=>{const fs=s.sessions&&s.sessions[0];return fs&&(fs.airTemp!=null||fs.trackTemp!=null)?html`<span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:C.s3,color:C.muted2}}>${fs.airTemp!=null?"🌡"+fs.airTemp+"°":""}${fs.airTemp!=null&&fs.trackTemp!=null?" ":""}${fs.trackTemp!=null?"🔥"+fs.trackTemp+"°":""}</span>`:null;})()}
+                <span style=${{fontSize:9,color:C.muted2,marginLeft:"auto"}}>${s.date}</span>
+              </div>
+              <div style=${{fontWeight:700,fontSize:14,marginBottom:2}}>${s.circuit}</div>
+              <div style=${{fontSize:11,color:C.muted2,marginBottom:4,display:"flex",gap:8,flexWrap:"wrap"}}>
+                ${s.car&&html`<span>${s.car}</span>`}
+                ${s.driver&&html`<span>👤${s.driver}</span>`}
+                ${s.tireMileage!=null&&html`<span>🛞${s.tireMileage}km</span>`}
+              </div>
+              <div style=${{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                ${s.bestLap&&html`<span style=${{fontFamily:"'Bebas Neue',cursive",fontSize:18,color:C.race,letterSpacing:"0.05em"}}>⚡ ${s.bestLapNum?s.bestLapNum+"周目 ":""}${s.bestLap}</span>`}
+                ${totalLapCount>0&&html`<span style=${{fontSize:10,color:C.muted2}}>${totalLapCount} laps</span>`}
+                ${s.sessions&&html`<span style=${{fontSize:10,color:C.muted2}}>${s.sessions.length}枠</span>`}
+                ${s.racePos&&html`<span style=${{fontSize:11,color:typeColor}}>P${s.racePos}</span>`}
+              </div>
+            </div>
+            <div style=${{color:C.muted2,fontSize:14,flexShrink:0,marginTop:2}}>${isExp?"▲":"▼"}</div>
+          </div>
+          ${isExp&&html`<div style=${{borderTop:"1px solid "+C.border,padding:"12px 13px"}}>
+            ${(s.sessions||[]).map((ss,si)=>{
+              const ssBest=ss.bestLap;
+              if(!ss.laps||!ss.laps.length) return null;
+              return html`<div key=${si} style=${{marginBottom:10}}>
+                <div style=${{display:"flex",alignItems:"center",gap:8,marginBottom:5,flexWrap:"wrap"}}>
+                  <span style=${{fontSize:9,color:C.race,letterSpacing:"0.08em",fontWeight:700}}>S${si+1}${ss.label?" — "+ss.label:""}</span>
+                  ${ss.driver&&html`<span style=${{fontSize:9,color:C.muted2}}>👤${ss.driver}</span>`}
+                  ${ss.airTemp!=null&&html`<span style=${{fontSize:9,color:C.muted2}}>🌡${ss.airTemp}°</span>`}
+                  ${ss.trackTemp!=null&&html`<span style=${{fontSize:9,color:"#f97316"}}>🔥${ss.trackTemp}°</span>`}
+                </div>
+                ${ssBest&&html`<div style=${{fontSize:10,color:C.muted2,marginBottom:4}}>
+                  ⚡ BEST: ${ssBest.num?ssBest.num+"周目 ":""}${ssBest.time}
+                </div>`}
+                <div style=${{display:"flex",flexWrap:"wrap",gap:4}}>
+                  ${ss.laps.map((l,li)=>{
+                    const isBest=ssBest&&parseLap(l.time)===parseLap(ssBest.time);
+                    return html`<span key=${li} style=${{fontSize:11,padding:"3px 8px",borderRadius:6,background:isBest?"rgba(245,158,11,.15)":C.s2,color:isBest?C.race:C.text,border:"1px solid "+(isBest?C.race:C.border),fontFamily:"'Bebas Neue',cursive",letterSpacing:"0.03em"}}>
+                      ${l.num?l.num+"周 ":""}${l.time}${isBest?" ◆":""}
+                    </span>`;
+                  })}
+                </div>
+              </div>`;
+            })}
+            ${(s.qualPos||s.racePos||s.incidents!=null)&&html`<div style=${{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              ${s.qualPos&&html`<div style=${{background:C.s2,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><div style=${{fontSize:9,color:C.muted2,marginBottom:1}}>予選</div><div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:18,color:C.sleep}}>P${s.qualPos}</div></div>`}
+              ${s.racePos&&html`<div style=${{background:C.s2,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><div style=${{fontSize:9,color:C.muted2,marginBottom:1}}>決勝</div><div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:18,color:C.run}}>P${s.racePos}</div></div>`}
+              ${s.incidents!=null&&html`<div style=${{background:C.s2,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><div style=${{fontSize:9,color:C.muted2,marginBottom:1}}>インシデント</div><div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:18,color:C.cal}}>${s.incidents}x</div></div>`}
+            </div>`}
+            ${s.focus&&html`<div style=${{marginBottom:8}}><div style=${{fontSize:9,color:C.muted2,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:3}}>課題</div><div style=${{background:C.s2,borderRadius:7,padding:"7px 10px",fontSize:12,lineHeight:1.6}}>${s.focus}</div></div>`}
+            ${s.notes&&html`<div style=${{marginBottom:10}}><div style=${{fontSize:9,color:C.muted2,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:3}}>振り返り</div><div style=${{background:C.s2,borderRadius:7,padding:"7px 10px",fontSize:12,lineHeight:1.7,whiteSpace:"pre-wrap"}}>${s.notes}</div></div>`}
+            <button onClick=${()=>deleteRecord(s.id)} style=${{background:"rgba(255,58,58,.1)",color:C.run,border:"1px solid rgba(255,58,58,.25)",borderRadius:7,padding:"6px 14px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>削除</button>
+          </div>`}
+        </div>`;
+      })}
+    </div>`}
+
+    ${subTab==="best"&&html`<div>
+      <div style=${{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
+        ${[{l:"TOTAL",v:raceSessions.length,c:C.race},{l:"TOTAL LAPS",v:totalLaps(),c:C.sim},{l:"CIRCUITS",v:new Set(raceSessions.map(s=>s.circuit)).size,c:C.sleep}].map(s=>html`
+          <div key=${s.l} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"10px 8px",textAlign:"center"}}>
+            <div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:26,lineHeight:1,color:s.c}}>${s.v}</div>
+            <div style=${{fontSize:8,color:C.muted2,marginTop:2,letterSpacing:"0.08em"}}>${s.l}</div>
+          </div>
+        `)}
+      </div>
+      <div style=${{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:10}}>サーキット別ベストラップ</div>
+      ${bestByCircuit().length===0&&html`<div style=${{textAlign:"center",padding:"30px 0",color:C.muted2}}>
+        <div style=${{fontSize:28,marginBottom:8}}>🏆</div><div style=${{fontSize:12}}>記録がありません</div>
+      </div>`}
+      ${(()=>{const counts=sessionCounts();return bestByCircuit().map(([circuit,s])=>html`
+        <div key=${circuit} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:"13px 14px",marginBottom:10,position:"relative",overflow:"hidden"}}>
+          <div style=${{position:"absolute",top:0,left:0,bottom:0,width:3,background:C.race}}/>
+          <div style=${{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+            <div>
+              <div style=${{fontWeight:700,fontSize:14,marginBottom:4}}>${circuit}</div>
+              <div style=${{display:"flex",gap:6,flexWrap:"wrap"}}>
+                ${s.car&&html`<span style=${{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.s3,color:C.muted2}}>${s.car}</span>`}
+                <span style=${{fontSize:10,padding:"2px 8px",borderRadius:20,background:"rgba(16,185,129,.12)",color:C.sim}}>${counts[circuit]} days</span>
+                <span style=${{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.s3,color:C.muted2}}>${s.date}</span>
+              </div>
+            </div>
+            <div style=${{textAlign:"right",flexShrink:0}}>
+              ${s._bestNum&&html`<div style=${{fontSize:9,color:C.muted2,marginBottom:1}}>${s._bestNum}周目</div>`}
+              <div style=${{fontSize:9,color:C.race,letterSpacing:"0.1em",marginBottom:2}}>BEST LAP</div>
+              <div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:24,color:C.race,letterSpacing:"0.05em",lineHeight:1}}>${s._bestTime}</div>
+            </div>
+          </div>
+        </div>
+      `)})()}
+    </div>`}
+
+    ${subTab==="report"&&html`<div>
+      ${raceSessions.length===0?html`<div style=${{textAlign:"center",padding:"40px 0",color:C.muted2}}>
+        <div style=${{fontSize:32,marginBottom:8}}>📄</div>
+        <div style=${{fontSize:12}}>レース記録を保存するとレポートを作成できます</div>
+      </div>`:html`<div>
+        <div style=${{marginBottom:12}}>
+          <div style=${{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <label style=${{fontSize:9,color:C.muted2,letterSpacing:"0.1em",textTransform:"uppercase"}}>レポートにする記録を選択（複数可）</label>
+            <div style=${{display:"flex",gap:6}}>
+              <button onClick=${()=>setReportIds(raceSessions.map(s=>s.id))} style=${{fontSize:10,color:C.race,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit"}}>全選択</button>
+              <button onClick=${()=>setReportIds([])} style=${{fontSize:10,color:C.muted2,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit"}}>解除</button>
+            </div>
+          </div>
+          ${raceSessions.map(s=>{
+            const checked=reportIds.includes(s.id);
+            return html`<div key=${s.id} onClick=${()=>setReportIds(checked?reportIds.filter(x=>x!==s.id):[...reportIds,s.id])} style=${{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:checked?C.race+"11":C.s1,border:"1px solid "+(checked?C.race:C.border),borderRadius:8,marginBottom:6,cursor:"pointer",transition:"all .15s"}}>
+              <div style=${{width:18,height:18,borderRadius:5,border:"2px solid "+(checked?C.race:C.muted2),background:checked?C.race:"none",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                ${checked&&html`<span style=${{color:"#000",fontSize:12,fontWeight:700}}>✓</span>`}
+              </div>
+              <div style=${{flex:1}}>
+                <div style=${{fontSize:12,fontWeight:600}}>${s.circuit}${s.car?" / "+s.car:""}</div>
+                <div style=${{fontSize:10,color:C.muted2}}>${s.date}　${SESSION_LABELS[s.type]}　${getAllLaps(s).length} laps</div>
+              </div>
+            </div>`;
+          })}
+        </div>
+        ${(()=>{
+          const selected=raceSessions.filter(x=>reportIds.includes(x.id));
+          if(!selected.length) return null;
+
+          const lines=[];
+          lines.push("【レース活動レポート】");
+
+          selected.forEach((s,ri)=>{
+            const allLaps=getAllLaps(s);
+            const best=getBestObj(allLaps);
+            const dateObj=new Date(s.date+"T00:00:00");
+            const dateJa=dateObj.getFullYear()+"年"+(dateObj.getMonth()+1)+"月"+dateObj.getDate()+"日";
+            const typeJa={practice:"フリー走行",qualifying:"予選",race:"決勝レース"}[s.type]||s.type;
+            const condJa={dry:"ドライ",damp:"セミウェット",wet:"ウェット"}[s.condition]||s.condition;
+
+            if(ri>0) lines.push("","━━━━━━━━━━━━━━━━━━━━","");
+            lines.push("");
+            lines.push("■ 開催概要");
+            lines.push("日　付："+dateJa);
+            lines.push("サーキット："+s.circuit);
+            if(s.driver) lines.push("ドライバー："+s.driver);
+            if(s.car) lines.push("車　両："+s.car);
+            lines.push("種　別："+typeJa);
+            lines.push("天　候："+condJa);
+            if(s.tireMileage!=null) lines.push("タイヤ開始km："+s.tireMileage+"km");
+            if(s.lapLengthKm!=null) lines.push("1周距離："+s.lapLengthKm+"km");
+            lines.push("");
+            lines.push("■ セッション結果");
+            let cumKm=s.tireMileage||0;
+            const lapKm=s.lapLengthKm||0;
+            (s.sessions||[]).forEach((ss,i)=>{
+              lines.push("");
+              const lb="▶ S"+(i+1)+(ss.label?" ("+ss.label+")":"");
+              lines.push(lb);
+              if(ss.driver) lines.push("  ドライバー："+ss.driver);
+              if(ss.airTemp!=null||ss.trackTemp!=null){
+                const tmp=[];
+                if(ss.airTemp!=null) tmp.push("気温 "+ss.airTemp+"°C");
+                if(ss.trackTemp!=null) tmp.push("路面温度 "+ss.trackTemp+"°C");
+                lines.push("  "+tmp.join("　"));
+              }
+              if(ss.p1!=null||ss.p2!=null||ss.p3!=null||ss.p4!=null){
+                const pr=[["FL",ss.p1],["FR",ss.p2],["RL",ss.p3],["RR",ss.p4]].filter(x=>x[1]!=null).map(x=>x[0]+" "+x[1]+"kPa");
+                lines.push("  内圧："+pr.join(" / "));
+              }
+              const validLaps=(ss.laps||[]).filter(l=>!isOutInLap(l));
+              lines.push("  周回数："+validLaps.length+"周");
+              if(lapKm){
+                const sessKm=validLaps.length*lapKm;
+                cumKm+=sessKm;
+                lines.push("  走行距離："+sessKm.toFixed(2)+"km　タイヤ累計："+cumKm.toFixed(1)+"km");
+              }
+              if(ss.bestLap) lines.push("  ベストラップ："+(ss.bestLap.num?ss.bestLap.num+"周目 / ":"")+ss.bestLap.time);
+              if(validLaps.length>0){
+                const times=validLaps.map(l=>({num:l.num,time:l.time,ms:parseLap(l.time)})).filter(l=>l.ms<Infinity).sort((a,b)=>a.ms-b.ms);
+                if(times.length>0){
+                  const avg=times.reduce((s,l)=>s+l.ms,0)/times.length;
+                  const avgSec=(avg/1000).toFixed(2);
+                  const avgStr=avg>=60000?Math.floor(avg/60000)+":"+((avg%60000)/1000).toFixed(2):avgSec;
+                  lines.push("  平均ラップ："+avgStr);
+                  if(times.length<=5){
+                    lines.push("  ラップタイム："+times.map(l=>(l.num?l.num+"周:":"")+l.time).join(" / "));
+                  } else {
+                    const top3=times.slice(0,3).map(l=>(l.num?l.num+"周:":"")+l.time).join(", ");
+                    lines.push("  TOP3："+top3);
+                  }
+                }
+              }
+            });
+            lines.push("");
+            lines.push("■ 総合ベストラップ");
+            if(best) lines.push(best.time+(best.num?" （"+best.num+"周目）":""));
+            else lines.push("—");
+            if(s.qualPos||s.racePos){
+              lines.push("");
+              lines.push("■ 順位");
+              if(s.qualPos) lines.push("予選：P"+s.qualPos);
+              if(s.racePos) lines.push("決勝：P"+s.racePos);
+              if(s.incidents!=null) lines.push("インシデント："+s.incidents+"pt");
+            }
+            if(s.focus){
+              lines.push("");
+              lines.push("■ 本日のテーマ・課題");
+              lines.push(s.focus);
+            }
+            if(s.notes){
+              lines.push("");
+              lines.push("■ 振り返り・コメント");
+              lines.push(s.notes);
+            }
+          });
+          lines.push("");
+          lines.push("引き続きご支援のほど、よろしくお願いいたします。");
+          const text=lines.join("\n");
+
+          const copyText=()=>{
+            try{
+              if(navigator.clipboard&&navigator.clipboard.writeText){
+                navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{fallbackCopy(text);});
+              } else { fallbackCopy(text); }
+            }catch(e){ fallbackCopy(text); }
+            function fallbackCopy(t){const ta=document.createElement("textarea");ta.value=t;ta.style.cssText="position:fixed;left:-9999px";document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);setCopied(true);setTimeout(()=>setCopied(false),2500);}
+          };
+
+          return html`<div>
+            <div style=${{fontSize:10,color:C.muted2,marginBottom:8}}>${selected.length}件選択中</div>
+            <div style=${{display:"flex",gap:8,marginBottom:10}}>
+              <button onClick=${copyText} style=${{flex:1,background:copied?C.sim:C.race,color:"#000",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all .2s"}}>
+                ${copied?"✓ コピーしました！":"📋 テキストをコピー"}
+              </button>
+              <button onClick=${()=>window.print()} style=${{background:C.s2,color:C.text,border:"1px solid "+C.border,borderRadius:9,padding:"11px 14px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🖨️</button>
+            </div>
+            <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"16px",whiteSpace:"pre-wrap",fontSize:12,lineHeight:1.9,color:C.text,fontFamily:"inherit"}}>
+              ${text}
+            </div>
+          </div>`;
+        })()}
+      </div>`}
+    </div>`}
+  </div>`;
+}
+
+// ---- MAIN APP ----
+function App() {
+  const [tab,setTab]=useState("today");
+  const [tasks,setTasks]=useState([]);
+  const [habits,setHabits]=useState([]);
+  const [raceSessions,setRaceSessions]=useState([]);
+  const [newTask,setNewTask]=useState("");
+  const [newPri,setNewPri]=useState("mid");
+  const [selectedDate,setSelectedDate]=useState(todayStr());
+  const [form,setForm]=useState({rKm:"",rMin:"",slH:"",wtKg:"",simMin:"",calKcal:"",calMemo:""});
+  const [saved,setSaved]=useState(false);
+  const [chatMessages,setChatMessages]=useState([{role:"ai",text:"こんにちは、コウタさん！\n分析・タスク相談・雑談、何でも聞いてください 🏎️"}]);
+  const [chatInput,setChatInput]=useState("");
+  const [chatLoading,setChatLoading]=useState(false);
+  const chatEndRef=useRef(null);
+
+  useEffect(()=>{
+    let t=JSON.parse(localStorage.getItem(TKEY)||"null");
+    const sd=localStorage.getItem(DKEY);
+    const td=todayStr();
     if(sd!==td){t=null;localStorage.setItem(DKEY,td);}
     if(!t){t=DEFAULT_TASKS;localStorage.setItem(TKEY,JSON.stringify(t));}
     setTasks(t);
-    let h = JSON.parse(localStorage.getItem(HKEY)||"null");
+    let h=JSON.parse(localStorage.getItem(HKEY)||"null");
     if(!h){h=PRESET_HABITS;localStorage.setItem(HKEY,JSON.stringify(h));}
     else if(!h.find(r=>r.date==="2026-03-30")){h=[...h,...PRESET_HABITS].sort((a,b)=>a.date>b.date?1:-1);localStorage.setItem(HKEY,JSON.stringify(h));}
     setHabits(h);
-    prefillForm(h, td);
-  }, []);
+    prefillForm(h,td);
+    const r=JSON.parse(localStorage.getItem(RKEY)||"[]");
+    setRaceSessions(r);
+  },[]);
 
-  const prefillForm = (h, date) => {
-    const rec = h.find(r=>r.date===date);
+  const prefillForm=(h,date)=>{
+    const rec=h.find(r=>r.date===date);
     if(rec) setForm({rKm:rec.runKm??"",rMin:rec.runMin??"",slH:rec.sleepH??"",wtKg:rec.weightKg??"",simMin:rec.simMin??"",calKcal:rec.calKcal??"",calMemo:rec.calMemo??""});
     else setForm({rKm:"",rMin:"",slH:"",wtKg:"",simMin:"",calKcal:"",calMemo:""});
   };
 
-  const handleDateSelect = (date) => { setSelectedDate(date); prefillForm(habits, date); setSaved(false); };
-  const saveTasks = t => { setTasks(t); localStorage.setItem(TKEY,JSON.stringify(t)); };
-  const saveHabits = h => { setHabits(h); localStorage.setItem(HKEY,JSON.stringify(h)); };
-  const toggleTask = id => saveTasks(tasks.map(t=>t.id===id?{...t,done:!t.done}:t));
-  const addTask = () => { if(!newTask.trim()) return; saveTasks([...tasks,{id:Date.now(),name:newTask,priority:newPri,time:"",cat:"work",done:false}]); setNewTask(""); };
+  const handleDateSelect=(date)=>{setSelectedDate(date);prefillForm(habits,date);setSaved(false);};
+  const saveTasks=t=>{setTasks(t);localStorage.setItem(TKEY,JSON.stringify(t));};
+  const saveHabits=h=>{setHabits(h);localStorage.setItem(HKEY,JSON.stringify(h));};
+  const toggleTask=id=>saveTasks(tasks.map(t=>t.id===id?{...t,done:!t.done}:t));
+  const addTask=()=>{if(!newTask.trim()) return;saveTasks([...tasks,{id:Date.now(),name:newTask,priority:newPri,time:"",cat:"work",done:false}]);setNewTask("");};
 
-  const saveTracker = () => {
-    const rec = {date:selectedDate,runKm:parseFloat(form.rKm)||null,runMin:parseFloat(form.rMin)||null,sleepH:parseFloat(form.slH)||null,weightKg:parseFloat(form.wtKg)||null,simMin:parseFloat(form.simMin)||null,calKcal:parseFloat(form.calKcal)||null,calMemo:form.calMemo||""};
-    const h = [...habits.filter(r=>r.date!==rec.date),rec].sort((a,b)=>a.date>b.date?1:-1);
-    saveHabits(h); setSaved(true); setTimeout(()=>setSaved(false),2000);
+  const saveTracker=()=>{
+    const rec={date:selectedDate,runKm:parseFloat(form.rKm)||null,runMin:parseFloat(form.rMin)||null,sleepH:parseFloat(form.slH)||null,weightKg:parseFloat(form.wtKg)||null,simMin:parseFloat(form.simMin)||null,calKcal:parseFloat(form.calKcal)||null,calMemo:form.calMemo||""};
+    const h=[...habits.filter(r=>r.date!==rec.date),rec].sort((a,b)=>a.date>b.date?1:-1);
+    saveHabits(h);setSaved(true);setTimeout(()=>setSaved(false),2000);
   };
 
-  const streak = field => { const s=[...habits].sort((a,b)=>b.date>a.date?1:-1); let c=0; for(const r of s){if(r[field]!=null)c++;else break;} return c; };
+  const streak=field=>{const s=[...habits].sort((a,b)=>b.date>a.date?1:-1);let c=0;for(const r of s){if(r[field]!=null)c++;else break;}return c;};
 
-  const last7 = () => {
-    const labels=[], keys=[];
-    for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const k=dateStr(d);keys.push(k);labels.push(`${d.getMonth()+1}/${d.getDate()}`);}
+  const last7=()=>{
+    const labels=[],keys=[];
+    for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const k=dateStr(d);keys.push(k);labels.push((d.getMonth()+1)+"/"+(d.getDate()));}
     return {labels,keys};
   };
+  const chartData=field=>{const {labels,keys}=last7();return keys.map((k,i)=>{const r=habits.find(h=>h.date===k);return{label:labels[i],val:r&&r[field]!=null?r[field]:null};});};
 
-  const chartData = field => { const {labels,keys}=last7(); return keys.map((k,i)=>{const r=habits.find(h=>h.date===k);return {label:labels[i],val:r&&r[field]!=null?r[field]:null};}); };
+  useEffect(()=>{chatEndRef.current&&chatEndRef.current.scrollIntoView({behavior:"smooth"});},[chatMessages]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages]);
-
-  const sendChat = async () => {
-    const msg = chatInput.trim();
-    if (!msg || chatLoading) return;
+  const sendChat=async()=>{
+    const msg=chatInput.trim();
+    if(!msg||chatLoading) return;
     setChatInput("");
-    setChatMessages(prev => [...prev, { role: "user", text: msg }]);
+    setChatMessages(prev=>[...prev,{role:"user",text:msg}]);
     setChatLoading(true);
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, tasks, habits, history: chatMessages }),
-      });
-      const data = await res.json();
-      setChatMessages(prev => [...prev, { role: "ai", text: data.error ? "エラーが発生しました。" : data.text }]);
-    } catch(e) {
-      setChatMessages(prev => [...prev, { role: "ai", text: "エラーが発生しました。" }]);
+    try{
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg,tasks,habits,history:chatMessages})});
+      const data=await res.json();
+      setChatMessages(prev=>[...prev,{role:"ai",text:data.error?"エラーが発生しました。":data.text}]);
+    }catch(e){
+      setChatMessages(prev=>[...prev,{role:"ai",text:"エラーが発生しました。"}]);
     }
     setChatLoading(false);
   };
 
-  const done=tasks.filter(t=>t.done).length, total=tasks.length, pct=total?Math.round(done/total*100):0, circ=144.5;
+  const done=tasks.filter(t=>t.done).length,total=tasks.length,pct=total?Math.round(done/total*100):0,circ=144.5;
   const isToday=selectedDate===todayStr();
   const dateLabel=new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"long",day:"numeric",weekday:"short"});
 
-  return (
-    <div style={{background:C.bg,minHeight:"100vh",color:C.text,fontFamily:"'Noto Sans JP',sans-serif",fontWeight:300,paddingBottom:68,fontSize:14}}>
+  return html`<div style=${{background:C.bg,minHeight:"100vh",color:C.text,fontFamily:"-apple-system,BlinkMacSystemFont,'Hiragino Sans','Yu Gothic',sans-serif",fontWeight:300,paddingBottom:68,fontSize:14}}>
 
-      <div style={{padding:"18px 16px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"flex-end",position:"sticky",top:0,background:"rgba(8,8,8,.95)",zIndex:50}}>
-        <div>
-          <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:26,letterSpacing:"0.12em",lineHeight:1}}>KOUTA OS</div>
-          <div style={{fontSize:10,color:C.muted2,marginTop:3}}>{dateLabel}</div>
-        </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:26,lineHeight:1,color:C.run}}>{streak("runKm")}</div>
-          <div style={{fontSize:9,color:C.muted2,letterSpacing:"0.1em"}}>RUN STREAK</div>
-        </div>
+    <div style=${{padding:"18px 16px 12px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"flex-end",position:"sticky",top:0,background:"rgba(8,8,8,.95)",zIndex:50}}>
+      <div>
+        <div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:26,letterSpacing:"0.12em",lineHeight:1}}>KOUTA OS</div>
+        <div style=${{fontSize:10,color:C.muted2,marginTop:3}}>${dateLabel}</div>
       </div>
-
-      {tab==="today"&&<div style={{padding:"14px 14px 0"}}>
-        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:14}}>
-          <div style={{position:"relative",width:56,height:56,flexShrink:0}}>
-            <svg width="56" height="56" viewBox="0 0 56 56" style={{transform:"rotate(-90deg)"}}>
-              <defs><linearGradient id="rg"><stop offset="0%" stopColor="#ff3a3a"/><stop offset="100%" stopColor="#f97316"/></linearGradient></defs>
-              <circle cx="28" cy="28" r="23" fill="none" stroke={C.s3} strokeWidth="5"/>
-              <circle cx="28" cy="28" r="23" fill="none" stroke="url(#rg)" strokeWidth="5" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={circ-(circ*pct/100)} style={{transition:"stroke-dashoffset .5s"}}/>
-            </svg>
-            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',cursive",fontSize:13}}>{pct}%</div>
-          </div>
-          <div><div style={{fontWeight:700,marginBottom:3}}>{pct===100?"🎉 全部完了！":"今日のタスク"}</div><div style={{fontSize:11,color:C.muted2}}>{done} / {total} 完了</div></div>
-        </div>
-        {["must","high","mid","low"].map(g=>{
-          const list=tasks.filter(t=>t.priority===g); if(!list.length) return null;
-          const labels={must:"MUST — 絶対やる",high:"HIGH — 高優先",mid:"MID — 中優先",low:"LOW — 余裕があれば"};
-          return <div key={g} style={{marginBottom:14}}>
-            <div style={{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:8}}>{labels[g]}</div>
-            {list.map(t=><div key={t.id} onClick={()=>toggleTask(t.id)} style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:11,padding:"12px 13px",marginBottom:7,display:"flex",alignItems:"center",gap:11,cursor:"pointer",opacity:t.done?0.3:1,position:"relative",overflow:"hidden"}}>
-              <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:priColor[t.priority]}}/>
-              <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${t.done?C.muted2:priColor[t.priority]}`,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,background:t.done?C.muted2:"transparent",color:"#fff"}}>{t.done?"✓":""}</div>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13,textDecoration:t.done?"line-through":"none"}}>{t.name}</div>
-                <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
-                  {t.priority==="must"&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:"rgba(255,58,58,.15)",color:C.run,fontWeight:700}}>MUST</span>}
-                  <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:t.cat==="work"?"rgba(61,142,255,.12)":"rgba(159,122,234,.12)",color:t.cat==="work"?C.sleep:C.weight}}>{t.cat==="work"?"仕事":"プライベート"}</span>
-                  {t.time&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:C.s3,color:C.muted2}}>{t.time}</span>}
-                </div>
-              </div>
-            </div>)}
-          </div>;
-        })}
-        <div style={{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:8}}>タスクを追加</div>
-        <div style={{display:"flex",gap:7,marginBottom:20}}>
-          <input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()} placeholder="タスク名..." style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 13px",color:C.text,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
-          <select value={newPri} onChange={e=>setNewPri(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:9,color:C.text,padding:"10px 8px",fontSize:12,outline:"none"}}>
-            <option value="high">🔴 高</option><option value="mid">🔵 中</option><option value="low">⚫ 低</option>
-          </select>
-          <button onClick={addTask} style={{background:"#fff",color:"#000",border:"none",borderRadius:9,padding:"10px 14px",fontWeight:700,fontSize:13,cursor:"pointer"}}>+</button>
-        </div>
-      </div>}
-
-      {tab==="tracker"&&<div style={{padding:"14px 14px 0"}}>
-        <div style={{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:10}}>日付を選択</div>
-        <CalendarPicker habits={habits} selectedDate={selectedDate} onSelect={handleDateSelect}/>
-        <div style={{background:isToday?"rgba(255,58,58,.1)":"rgba(61,142,255,.1)",border:`1px solid ${isToday?C.run:C.sleep}`,borderRadius:10,padding:"9px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:16}}>{isToday?"📅":"🗓"}</span>
-          <span style={{fontSize:13,fontWeight:700,color:isToday?C.run:C.sleep}}>{isToday?"今日":selectedDate} の記録</span>
-        </div>
-        <div style={{display:"flex",gap:8,marginBottom:14}}>
-          {[{l:"RUN",v:streak("runKm"),c:C.run},{l:"SLEEP",v:streak("sleepH"),c:C.sleep},{l:"SIM",v:streak("simMin"),c:C.sim}].map(s=>(
-            <div key={s.l} style={{flex:1,background:C.s1,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 8px",textAlign:"center"}}>
-              <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:24,lineHeight:1,color:s.c}}>{s.v}</div>
-              <div style={{fontSize:9,color:C.muted2,marginTop:2}}>{s.l}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:12}}>
-          {[
-            {k:"run",icon:"🏃",lbl:"RUNNING",c:C.run,fields:[{id:"rKm",ph:"km",hint:"距離"},{id:"rMin",ph:"min",hint:"タイム"}]},
-            {k:"sleep",icon:"🌙",lbl:"SLEEP",c:C.sleep,fields:[{id:"slH",ph:"h",hint:"睡眠時間"}]},
-            {k:"weight",icon:"⚖️",lbl:"WEIGHT",c:C.weight,fields:[{id:"wtKg",ph:"kg",hint:"体重"}]},
-            {k:"sim",icon:"🎮",lbl:"SIMULATOR",c:C.sim,fields:[{id:"simMin",ph:"min",hint:"練習時間"}]},
-          ].map(card=>(
-            <div key={card.k} style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:12,padding:13,position:"relative",overflow:"hidden"}}>
-              <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:card.c}}/>
-              <div style={{fontSize:18,marginBottom:4}}>{card.icon}</div>
-              <div style={{fontSize:9,color:C.muted2,letterSpacing:"0.1em",marginBottom:7}}>{card.lbl}</div>
-              <div style={{display:"flex",gap:5}}>
-                {card.fields.map(f=><div key={f.id} style={{flex:1}}>
-                  <input type="number" placeholder={f.ph} value={form[f.id]} onChange={e=>setForm(p=>({...p,[f.id]:e.target.value}))} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:7,padding:"8px 10px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"}}/>
-                  <div style={{fontSize:9,color:C.muted2,marginTop:2,textAlign:"right"}}>{f.hint}</div>
-                </div>)}
-              </div>
-            </div>
-          ))}
-          <div style={{gridColumn:"1/-1",background:C.s1,border:`1px solid ${C.border}`,borderRadius:12,padding:13,position:"relative",overflow:"hidden"}}>
-            <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:C.cal}}/>
-            <div style={{fontSize:18,marginBottom:4}}>🍱</div>
-            <div style={{fontSize:9,color:C.muted2,letterSpacing:"0.1em",marginBottom:7}}>FOOD & CALORIES</div>
-            <div style={{display:"flex",gap:6}}>
-              <div style={{flex:"0 0 90px"}}><input type="number" placeholder="kcal" value={form.calKcal} onChange={e=>setForm(p=>({...p,calKcal:e.target.value}))} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:7,padding:"8px 10px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"}}/><div style={{fontSize:9,color:C.muted2,marginTop:2}}>カロリー</div></div>
-              <div style={{flex:1}}><input type="text" placeholder="食事メモ" value={form.calMemo} onChange={e=>setForm(p=>({...p,calMemo:e.target.value}))} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:7,padding:"8px 10px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"}}/><div style={{fontSize:9,color:C.muted2,marginTop:2}}>メモ</div></div>
-            </div>
-          </div>
-        </div>
-        <button onClick={saveTracker} style={{width:"100%",background:saved?"#10b981":"#fff",color:"#000",border:"none",borderRadius:10,padding:13,fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:18,transition:"background .3s"}}>
-          {saved?`✅ 保存しました！`:`💾 ${isToday?"今日":"この日"}を記録する`}
-        </button>
-        <div style={{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:10}}>記録履歴</div>
-        {[...habits].sort((a,b)=>b.date>a.date?1:-1).map(r=>(
-          <div key={r.date} onClick={()=>handleDateSelect(r.date)} style={{background:r.date===selectedDate?C.s2:C.s1,border:`1px solid ${r.date===selectedDate?C.muted2:C.border}`,borderRadius:10,padding:13,marginBottom:8,cursor:"pointer"}}>
-            <div style={{fontSize:10,color:r.date===selectedDate?C.text:C.muted2,marginBottom:7,fontWeight:r.date===selectedDate?700:400}}>{r.date}{r.date===todayStr()?" (今日)":""}</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-              {r.runKm&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(255,58,58,.15)",color:C.run}}>🏃 {r.runKm}km{r.runMin?` / ${r.runMin}min`:""}</span>}
-              {r.sleepH&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(61,142,255,.15)",color:C.sleep}}>🌙 {r.sleepH}h</span>}
-              {r.weightKg&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(159,122,234,.15)",color:C.weight}}>⚖️ {r.weightKg}kg</span>}
-              {r.calKcal&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(249,115,22,.15)",color:C.cal}}>🍱 {r.calKcal}kcal{r.calMemo?` · ${r.calMemo}`:""}</span>}
-              {r.simMin&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(16,185,129,.15)",color:C.sim}}>🎮 {r.simMin}min</span>}
-            </div>
-          </div>
-        ))}
-      </div>}
-
-      {tab==="graph"&&<div style={{padding:"14px 14px 0"}}>
-        {[{lbl:"🏃 ランニング距離 (km)",field:"runKm",color:C.run,type:"bar"},{lbl:"🌙 睡眠時間 (h)",field:"sleepH",color:C.sleep,type:"bar"},{lbl:"⚖️ 体重推移 (kg)",field:"weightKg",color:C.weight,type:"line"},{lbl:"🍱 カロリー (kcal)",field:"calKcal",color:C.cal,type:"bar"},{lbl:"🎮 シミュレーター (min)",field:"simMin",color:C.sim,type:"bar"}].map(c=>(
-          <div key={c.field} style={{marginBottom:22}}>
-            <div style={{fontSize:10,color:C.muted2,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>{c.lbl}</div>
-            <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 12px"}}>
-              {c.type==="bar"?<MiniBar data={chartData(c.field)} color={c.color}/>:<MiniLine data={chartData(c.field)} color={c.color}/>}
-            </div>
-          </div>
-        ))}
-      </div>}
-
-      {tab==="ai"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 124px)",padding:"14px 14px 0"}}>
-        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-          <div style={{fontSize:22}}>🤖</div>
-          <div><div style={{fontWeight:700,fontSize:13}}>AI マルチエージェント</div><div style={{fontSize:10,color:C.muted2}}>分析 / タスク相談 / 雑談 — 何でもOK</div></div>
-        </div>
-        <div style={{flex:1,overflowY:"auto",paddingBottom:8}}>
-          {chatMessages.map((m,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",marginBottom:10}}>
-              <div style={{
-                maxWidth:"82%",
-                background:m.role==="user"?"#fff":C.s2,
-                color:m.role==="user"?"#000":C.text,
-                borderRadius:m.role==="user"?"16px 16px 4px 16px":"16px 16px 16px 4px",
-                padding:"10px 14px",fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap"
-              }}>{m.text}</div>
-            </div>
-          ))}
-          {chatLoading&&(
-            <div style={{display:"flex",justifyContent:"flex-start",marginBottom:10}}>
-              <div style={{background:C.s2,borderRadius:"16px 16px 16px 4px",padding:"10px 14px",fontSize:13,color:C.muted2}}>● 考え中...</div>
-            </div>
-          )}
-          <div ref={chatEndRef}/>
-        </div>
-        <div style={{display:"flex",gap:8,paddingTop:10,paddingBottom:14,background:C.bg,flexShrink:0}}>
-          <input
-            value={chatInput}
-            onChange={e=>setChatInput(e.target.value)}
-            onKeyDown={e=>e.key==="Enter"&&sendChat()}
-            placeholder="メッセージを入力..."
-            style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:22,padding:"10px 16px",color:C.text,fontSize:13,fontFamily:"inherit",outline:"none"}}
-          />
-          <button
-            onClick={sendChat}
-            disabled={chatLoading||!chatInput.trim()}
-            style={{background:chatLoading||!chatInput.trim()?C.s3:"#fff",color:chatLoading||!chatInput.trim()?C.muted2:"#000",border:"none",borderRadius:"50%",width:42,height:42,fontSize:18,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}
-          >↑</button>
-        </div>
-      </div>}
-
-      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(10,10,10,.97)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
-        {[{id:"today",icon:"✓",lbl:"TODAY"},{id:"tracker",icon:"📊",lbl:"LOG"},{id:"graph",icon:"📈",lbl:"GRAPH"},{id:"ai",icon:"🤖",lbl:"AI"}].map(n=>(
-          <div key={n.id} onClick={()=>setTab(n.id)} style={{flex:1,padding:"10px 4px 12px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",color:tab===n.id?"#fff":C.muted2,fontSize:9,letterSpacing:"0.08em"}}>
-            <div style={{fontSize:20,lineHeight:1}}>{n.icon}</div>{n.lbl}
-          </div>
-        ))}
+      <div style=${{textAlign:"right"}}>
+        <div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:26,lineHeight:1,color:tab==="race"?C.race:C.run}}>${tab==="race"?raceSessions.length:streak("runKm")}</div>
+        <div style=${{fontSize:9,color:C.muted2,letterSpacing:"0.1em"}}>${tab==="race"?"SESSIONS":"RUN STREAK"}</div>
       </div>
     </div>
-  );
+
+    ${tab==="today"&&html`<div style=${{padding:"14px 14px 0"}}>
+      <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:14,padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:14}}>
+        <div style=${{position:"relative",width:56,height:56,flexShrink:0}}>
+          <svg width="56" height="56" viewBox="0 0 56 56" style=${{transform:"rotate(-90deg)"}}>
+            <defs><linearGradient id="rg"><stop offset="0%" stopColor="#ff3a3a"/><stop offset="100%" stopColor="#f97316"/></linearGradient></defs>
+            <circle cx="28" cy="28" r="23" fill="none" stroke=${C.s3} strokeWidth="5"/>
+            <circle cx="28" cy="28" r="23" fill="none" stroke="url(#rg)" strokeWidth="5" strokeLinecap="round" strokeDasharray=${circ} strokeDashoffset=${circ-(circ*pct/100)} style=${{transition:"stroke-dashoffset .5s"}}/>
+          </svg>
+          <div style=${{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',cursive",fontSize:13}}>${pct}%</div>
+        </div>
+        <div><div style=${{fontWeight:700,marginBottom:3}}>${pct===100?"🎉 全部完了！":"今日のタスク"}</div><div style=${{fontSize:11,color:C.muted2}}>${done} / ${total} 完了</div></div>
+      </div>
+      ${["must","high","mid","low"].map(g=>{
+        const list=tasks.filter(t=>t.priority===g);
+        if(!list.length) return null;
+        const labels={must:"MUST — 絶対やる",high:"HIGH — 高優先",mid:"MID — 中優先",low:"LOW — 余裕があれば"};
+        return html`<div key=${g} style=${{marginBottom:14}}>
+          <div style=${{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:8}}>${labels[g]}</div>
+          ${list.map(t=>html`<div key=${t.id} onClick=${()=>toggleTask(t.id)} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:11,padding:"12px 13px",marginBottom:7,display:"flex",alignItems:"center",gap:11,cursor:"pointer",opacity:t.done?0.3:1,position:"relative",overflow:"hidden"}}>
+            <div style=${{position:"absolute",left:0,top:0,bottom:0,width:3,background:priColor[t.priority]}}/>
+            <div style=${{width:22,height:22,borderRadius:"50%",border:"2px solid "+(t.done?C.muted2:priColor[t.priority]),flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,background:t.done?C.muted2:"transparent",color:"#fff"}}>${t.done?"✓":""}</div>
+            <div style=${{flex:1}}>
+              <div style=${{fontSize:13,textDecoration:t.done?"line-through":"none"}}>${t.name}</div>
+              <div style=${{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+                ${t.priority==="must"&&html`<span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:"rgba(255,58,58,.15)",color:C.run,fontWeight:700}}>MUST</span>`}
+                <span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:t.cat==="work"?"rgba(61,142,255,.12)":"rgba(159,122,234,.12)",color:t.cat==="work"?C.sleep:C.weight}}>${t.cat==="work"?"仕事":"プライベート"}</span>
+                ${t.time&&html`<span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:C.s3,color:C.muted2}}>${t.time}</span>`}
+              </div>
+            </div>
+          </div>`)}
+        </div>`;
+      })}
+      <div style=${{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:8}}>タスクを追加</div>
+      <div style=${{display:"flex",gap:7,marginBottom:20}}>
+        <input value=${newTask} onChange=${e=>setNewTask(e.target.value)} onKeyDown=${e=>e.key==="Enter"&&addTask()} placeholder="タスク名..." style=${{flex:1,background:C.s2,border:"1px solid "+C.border,borderRadius:9,padding:"10px 13px",color:C.text,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+        <select value=${newPri} onChange=${e=>setNewPri(e.target.value)} style=${{background:C.s2,border:"1px solid "+C.border,borderRadius:9,color:C.text,padding:"10px 8px",fontSize:12,outline:"none"}}>
+          <option value="high">🔴 高</option>
+          <option value="mid">🔵 中</option>
+          <option value="low">⚫ 低</option>
+        </select>
+        <button onClick=${addTask} style=${{background:"#fff",color:"#000",border:"none",borderRadius:9,padding:"10px 14px",fontWeight:700,fontSize:13,cursor:"pointer"}}>+</button>
+      </div>
+    </div>`}
+
+    ${tab==="tracker"&&html`<div style=${{padding:"14px 14px 0"}}>
+      <div style=${{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:10}}>日付を選択</div>
+      <${CalendarPicker} habits=${habits} selectedDate=${selectedDate} onSelect=${handleDateSelect}/>
+      <div style=${{background:isToday?"rgba(255,58,58,.1)":"rgba(61,142,255,.1)",border:"1px solid "+(isToday?C.run:C.sleep),borderRadius:10,padding:"9px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+        <span style=${{fontSize:16}}>${isToday?"📅":"🗓"}</span>
+        <span style=${{fontSize:13,fontWeight:700,color:isToday?C.run:C.sleep}}>${isToday?"今日":selectedDate} の記録</span>
+      </div>
+      <div style=${{display:"flex",gap:8,marginBottom:14}}>
+        ${[{l:"RUN",v:streak("runKm"),c:C.run},{l:"SLEEP",v:streak("sleepH"),c:C.sleep},{l:"SIM",v:streak("simMin"),c:C.sim}].map(s=>html`
+          <div key=${s.l} style=${{flex:1,background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"10px 8px",textAlign:"center"}}>
+            <div style=${{fontFamily:"'Bebas Neue',cursive",fontSize:24,lineHeight:1,color:s.c}}>${s.v}</div>
+            <div style=${{fontSize:9,color:C.muted2,marginTop:2}}>${s.l}</div>
+          </div>
+        `)}
+      </div>
+      <div style=${{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:12}}>
+        ${[
+          {k:"run",icon:"🏃",lbl:"RUNNING",c:C.run,fields:[{id:"rKm",ph:"km",hint:"距離"},{id:"rMin",ph:"min",hint:"タイム"}]},
+          {k:"sleep",icon:"🌙",lbl:"SLEEP",c:C.sleep,fields:[{id:"slH",ph:"h",hint:"睡眠時間"}]},
+          {k:"weight",icon:"⚖️",lbl:"WEIGHT",c:C.weight,fields:[{id:"wtKg",ph:"kg",hint:"体重"}]},
+          {k:"sim",icon:"🎮",lbl:"SIMULATOR",c:C.sim,fields:[{id:"simMin",ph:"min",hint:"練習時間"}]},
+        ].map(card=>html`
+          <div key=${card.k} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:13,position:"relative",overflow:"hidden"}}>
+            <div style=${{position:"absolute",top:0,left:0,right:0,height:3,background:card.c}}/>
+            <div style=${{fontSize:18,marginBottom:4}}>${card.icon}</div>
+            <div style=${{fontSize:9,color:C.muted2,letterSpacing:"0.1em",marginBottom:7}}>${card.lbl}</div>
+            <div style=${{display:"flex",gap:5}}>
+              ${card.fields.map(f=>html`<div key=${f.id} style=${{flex:1}}>
+                <input type="number" placeholder=${f.ph} value=${form[f.id]} onChange=${e=>setForm(p=>({...p,[f.id]:e.target.value}))} style=${{background:C.s2,border:"1px solid "+C.border,borderRadius:7,padding:"8px 10px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+                <div style=${{fontSize:9,color:C.muted2,marginTop:2,textAlign:"right"}}>${f.hint}</div>
+              </div>`)}
+            </div>
+          </div>
+        `)}
+        <div style=${{gridColumn:"1/-1",background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:13,position:"relative",overflow:"hidden"}}>
+          <div style=${{position:"absolute",top:0,left:0,right:0,height:3,background:C.cal}}/>
+          <div style=${{fontSize:18,marginBottom:4}}>🍱</div>
+          <div style=${{fontSize:9,color:C.muted2,letterSpacing:"0.1em",marginBottom:7}}>FOOD & CALORIES</div>
+          <div style=${{display:"flex",gap:6}}>
+            <div style=${{flex:"0 0 90px"}}>
+              <input type="number" placeholder="kcal" value=${form.calKcal} onChange=${e=>setForm(p=>({...p,calKcal:e.target.value}))} style=${{background:C.s2,border:"1px solid "+C.border,borderRadius:7,padding:"8px 10px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+              <div style=${{fontSize:9,color:C.muted2,marginTop:2}}>カロリー</div>
+            </div>
+            <div style=${{flex:1}}>
+              <input type="text" placeholder="食事メモ" value=${form.calMemo} onChange=${e=>setForm(p=>({...p,calMemo:e.target.value}))} style=${{background:C.s2,border:"1px solid "+C.border,borderRadius:7,padding:"8px 10px",color:C.text,width:"100%",fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+              <div style=${{fontSize:9,color:C.muted2,marginTop:2}}>メモ</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button onClick=${saveTracker} style=${{width:"100%",background:saved?"#10b981":"#fff",color:"#000",border:"none",borderRadius:10,padding:13,fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:18,transition:"background .3s"}}>
+        ${saved?"✅ 保存しました！":"💾 "+(isToday?"今日":"この日")+"を記録する"}
+      </button>
+      <div style=${{fontSize:10,color:C.muted2,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:10}}>記録履歴</div>
+      ${[...habits].sort((a,b)=>b.date>a.date?1:-1).map(r=>html`
+        <div key=${r.date} onClick=${()=>handleDateSelect(r.date)} style=${{background:r.date===selectedDate?C.s2:C.s1,border:"1px solid "+(r.date===selectedDate?C.muted2:C.border),borderRadius:10,padding:13,marginBottom:8,cursor:"pointer"}}>
+          <div style=${{fontSize:10,color:r.date===selectedDate?C.text:C.muted2,marginBottom:7,fontWeight:r.date===selectedDate?700:400}}>${r.date}${r.date===todayStr()?" (今日)":""}</div>
+          <div style=${{display:"flex",flexWrap:"wrap",gap:5}}>
+            ${r.runKm&&html`<span style=${{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(255,58,58,.15)",color:C.run}}>🏃 ${r.runKm}km${r.runMin?" / "+r.runMin+"min":""}</span>`}
+            ${r.sleepH&&html`<span style=${{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(61,142,255,.15)",color:C.sleep}}>🌙 ${r.sleepH}h</span>`}
+            ${r.weightKg&&html`<span style=${{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(159,122,234,.15)",color:C.weight}}>⚖️ ${r.weightKg}kg</span>`}
+            ${r.calKcal&&html`<span style=${{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(249,115,22,.15)",color:C.cal}}>🍱 ${r.calKcal}kcal${r.calMemo?" · "+r.calMemo:""}</span>`}
+            ${r.simMin&&html`<span style=${{fontSize:10,padding:"3px 8px",borderRadius:20,background:"rgba(16,185,129,.15)",color:C.sim}}>🎮 ${r.simMin}min</span>`}
+          </div>
+        </div>
+      `)}
+    </div>`}
+
+    ${tab==="graph"&&html`<div style=${{padding:"14px 14px 0"}}>
+      ${[{lbl:"🏃 ランニング距離 (km)",field:"runKm",color:C.run,type:"bar"},{lbl:"🌙 睡眠時間 (h)",field:"sleepH",color:C.sleep,type:"bar"},{lbl:"⚖️ 体重推移 (kg)",field:"weightKg",color:C.weight,type:"line"},{lbl:"🍱 カロリー (kcal)",field:"calKcal",color:C.cal,type:"bar"},{lbl:"🎮 シミュレーター (min)",field:"simMin",color:C.sim,type:"bar"}].map(c=>html`
+        <div key=${c.field} style=${{marginBottom:22}}>
+          <div style=${{fontSize:10,color:C.muted2,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>${c.lbl}</div>
+          <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:"14px 12px"}}>
+            ${c.type==="bar"?html`<${MiniBar} data=${chartData(c.field)} color=${c.color}/>`:html`<${MiniLine} data=${chartData(c.field)} color=${c.color}/>`}
+          </div>
+        </div>
+      `)}
+    </div>`}
+
+    ${tab==="ai"&&html`<div style=${{display:"flex",flexDirection:"column",height:"calc(100vh - 124px)",padding:"14px 14px 0"}}>
+      <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+        <div style=${{fontSize:22}}>🤖</div>
+        <div><div style=${{fontWeight:700,fontSize:13}}>AI マルチエージェント</div><div style=${{fontSize:10,color:C.muted2}}>分析 / タスク相談 / 雑談 — 何でもOK</div></div>
+      </div>
+      <div style=${{flex:1,overflowY:"auto",paddingBottom:8}}>
+        ${chatMessages.map((m,i)=>html`
+          <div key=${i} style=${{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",marginBottom:10}}>
+            <div style=${{maxWidth:"82%",background:m.role==="user"?"#fff":C.s2,color:m.role==="user"?"#000":C.text,borderRadius:m.role==="user"?"16px 16px 4px 16px":"16px 16px 16px 4px",padding:"10px 14px",fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap"}}>${m.text}</div>
+          </div>
+        `)}
+        ${chatLoading&&html`<div style=${{display:"flex",justifyContent:"flex-start",marginBottom:10}}>
+          <div style=${{background:C.s2,borderRadius:"16px 16px 16px 4px",padding:"10px 14px",fontSize:13,color:C.muted2}}>● 考え中...</div>
+        </div>`}
+        <div ref=${chatEndRef}/>
+      </div>
+      <div style=${{display:"flex",gap:8,paddingTop:10,paddingBottom:14,background:C.bg,flexShrink:0}}>
+        <input value=${chatInput} onChange=${e=>setChatInput(e.target.value)} onKeyDown=${e=>e.key==="Enter"&&sendChat()} placeholder="メッセージを入力..." style=${{flex:1,background:C.s2,border:"1px solid "+C.border,borderRadius:22,padding:"10px 16px",color:C.text,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+        <button onClick=${sendChat} disabled=${chatLoading||!chatInput.trim()} style=${{background:chatLoading||!chatInput.trim()?C.s3:"#fff",color:chatLoading||!chatInput.trim()?C.muted2:"#000",border:"none",borderRadius:"50%",width:42,height:42,fontSize:18,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</button>
+      </div>
+    </div>`}
+
+    ${tab==="race"&&html`<${RaceTab} raceSessions=${raceSessions} setRaceSessions=${setRaceSessions}/>`}
+
+    <div style=${{position:"fixed",bottom:0,left:0,right:0,background:"rgba(10,10,10,.97)",borderTop:"1px solid "+C.border,display:"flex",zIndex:100}}>
+      ${[{id:"today",icon:"✓",lbl:"TODAY"},{id:"tracker",icon:"📊",lbl:"LOG"},{id:"graph",icon:"📈",lbl:"GRAPH"},{id:"race",icon:"🏁",lbl:"RACE"},{id:"ai",icon:"🤖",lbl:"AI"}].map(n=>html`
+        <div key=${n.id} onClick=${()=>setTab(n.id)} style=${{flex:1,padding:"10px 2px 12px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",color:tab===n.id?(n.id==="race"?C.race:"#fff"):C.muted2,fontSize:8,letterSpacing:"0.06em"}}>
+          <div style=${{fontSize:18,lineHeight:1}}>${n.icon}</div>${n.lbl}
+        </div>
+      `)}
+    </div>
+  </div>`;
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App}/>`);
 </script>
 </body>
 </html>
