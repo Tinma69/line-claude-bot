@@ -646,5 +646,31 @@ app.post('/api/race-scan', express.json({ limit: '15mb' }), async (req, res) => 
   }
 });
 
+// ===== Webアプリ データ同期 =====
+app.post('/api/sync/save', express.json({ limit: '5mb' }), async (req, res) => {
+  try {
+    const { key, data } = req.body;
+    if (!key || data === undefined) return res.status(400).json({ error: 'key and data required' });
+    const { error } = await supabase.from('web_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('sync save error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/sync/load/:key', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('web_data').select('data, updated_at').eq('key', req.params.key).single();
+    if (error && error.code === 'PGRST116') return res.json({ data: null });
+    if (error) throw error;
+    res.json({ data: data.data, updated_at: data.updated_at });
+  } catch (e) {
+    console.error('sync load error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`KOUTA OS Bot running on port ${PORT}`));

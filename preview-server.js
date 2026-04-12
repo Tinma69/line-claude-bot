@@ -12,8 +12,13 @@ try {
   }
 } catch {}
 
+const { createClient } = require('@supabase/supabase-js');
+
 const PORT = 3002;
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
+  : null;
 
 http.createServer(async (req, res) => {
   // CORS
@@ -132,6 +137,44 @@ http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: e.message }));
       }
     });
+    return;
+  }
+
+  // データ同期API
+  if (req.method === 'POST' && req.url === '/api/sync/save') {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', async () => {
+      try {
+        if (!supabase) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, local: true })); return; }
+        const { key, data } = JSON.parse(body);
+        const { error } = await supabase.from('web_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        if (error) throw error;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        console.error('sync save error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/sync/load/')) {
+    try {
+      if (!supabase) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: null })); return; }
+      const key = req.url.replace('/api/sync/load/', '');
+      const { data, error } = await supabase.from('web_data').select('data, updated_at').eq('key', key).single();
+      if (error && error.code === 'PGRST116') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: null })); return; }
+      if (error) throw error;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: data.data, updated_at: data.updated_at }));
+    } catch (e) {
+      console.error('sync load error:', e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
     return;
   }
 
