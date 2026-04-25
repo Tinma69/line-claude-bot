@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kouta-os",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["preview-server.js"],
+      "port": 3002,
+      "autoPort": false
+    }
+  ]
+}

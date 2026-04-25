@@ -1,2 +1,5 @@
 node_modules/
 .env
+
+# Claude Code local settings (user-specific permissions, may contain sensitive command history)
+.claude/settings.local.json
