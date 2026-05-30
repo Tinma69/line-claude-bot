@@ -525,6 +525,24 @@ app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
 
 async function handleEvent(event) {
   if (event.type !== 'message' || event.message.type !== 'text') return;
+
+  // グループ・複数人トーク：サイレント記録（返信しない）
+  if (event.source.type === 'group' || event.source.type === 'room') {
+    try {
+      await supabase.from('line_group_messages').insert({
+        group_id: event.source.groupId || event.source.roomId,
+        user_id: event.source.userId || null,
+        message_text: event.message.text,
+        message_id: event.message.id,
+        message_timestamp: new Date(event.timestamp).toISOString(),
+        raw_event: event,
+      });
+    } catch (err) {
+      console.error('Group log error:', err);
+    }
+    return;
+  }
+
   const userId = event.source.userId;
   const userMessage = event.message.text;
   try {
