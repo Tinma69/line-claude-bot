@@ -1,0 +1,96 @@
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    width:1600px; height:900px; background:#fff;
+    font-family:"Yu Gothic UI","Hiragino Sans","Noto Sans JP",sans-serif;
+    display:flex; flex-direction:column; padding:56px 64px 40px;
+  }
+  .eyebrow { font-size:20px; letter-spacing:.14em; color:#E8786C; font-weight:700; }
+  .title { font-size:44px; font-weight:700; color:#2B2B2B; margin-top:8px; letter-spacing:.01em; }
+  .sub { font-size:19px; color:#666; margin-top:10px; }
+  .chart { flex:1; margin-top:8px; }
+  .note { font-size:14px; color:#999; margin-top:4px; }
+  .stats { display:flex; gap:14px; margin-top:6px; }
+  .stat { flex:1; background:#FFF1EE; border-radius:14px; padding:16px 22px; }
+  .stat .n { font-size:32px; font-weight:700; color:#E8786C; line-height:1.1; }
+  .stat .l { font-size:15px; color:#2B2B2B; font-weight:700; margin-top:4px; }
+</style>
+
+<div class="eyebrow">GROWTH</div>
+<div class="title">利用者は、着実に増えています。</div>
+<div class="sub">高槻を中心に、アプリのダウンロードが伸び続けています</div>
+
+<div class="chart">
+<svg viewBox="0 0 1472 470" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#E8786C" stop-opacity=".38"/>
+      <stop offset="100%" stop-color="#E8786C" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="gProj" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#E8786C" stop-opacity=".13"/>
+      <stop offset="100%" stop-color="#E8786C" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- baseline -->
+  <line x1="60" y1="392" x2="1440" y2="392" stroke="#E8E8E8" stroke-width="2"/>
+
+  <!-- projection area + line (dashed) -->
+  <path d="M700,205 C 780,182 800,174 860,160 C 920,146 950,133 1000,120 C 1060,105 1090,96 1140,85 C 1190,73 1230,62 1280,52 C 1330,42 1380,32 1420,24 L1420,392 L700,392 Z" fill="url(#gProj)"/>
+  <path d="M700,205 C 780,182 800,174 860,160 C 920,146 950,133 1000,120 C 1060,105 1090,96 1140,85 C 1190,73 1230,62 1280,52 C 1330,42 1380,32 1420,24"
+        fill="none" stroke="#E8786C" stroke-width="5" stroke-dasharray="12 11" stroke-linecap="round" opacity=".55"/>
+
+  <!-- actual area + line (solid) -->
+  <path d="M80,360 C 160,353 200,347 260,343 C 330,338 380,332 430,326 C 470,321 500,300 545,250 C 585,215 640,208 700,205 L700,392 L80,392 Z" fill="url(#gArea)"/>
+  <path d="M80,360 C 160,353 200,347 260,343 C 330,338 380,332 430,326 C 470,321 500,300 545,250 C 585,215 640,208 700,205"
+        fill="none" stroke="#E8786C" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- milestone: 5/18 -->
+  <circle cx="262" cy="343" r="8" fill="#fff" stroke="#1E2761" stroke-width="4"/>
+  <line x1="262" y1="335" x2="262" y2="286" stroke="#C9CCE0" stroke-width="2"/>
+  <text x="262" y="272" text-anchor="middle" font-size="19" font-weight="700" fill="#1E2761">5/18 藤木先生ご面談</text>
+
+  <!-- milestone: 6/2 -->
+  <circle cx="430" cy="326" r="8" fill="#fff" stroke="#1E2761" stroke-width="4"/>
+  <line x1="430" y1="318" x2="430" y2="232" stroke="#C9CCE0" stroke-width="2"/>
+  <text x="430" y="218" text-anchor="middle" font-size="19" font-weight="700" fill="#1E2761">6/2 市役所ご訪問</text>
+
+  <!-- milestone: 6月末〜7/1 -->
+  <circle cx="560" cy="238" r="8" fill="#fff" stroke="#E8786C" stroke-width="4"/>
+  <line x1="560" y1="230" x2="560" y2="150" stroke="#F0C4BE" stroke-width="2"/>
+  <text x="556" y="136" text-anchor="middle" font-size="20" font-weight="700" fill="#E8786C">6月末〜7/1</text>
+  <text x="556" y="112" text-anchor="middle" font-size="18" font-weight="700" fill="#E8786C">アプリ正式ローンチ・利用者が急増</text>
+
+  <!-- current point -->
+  <circle cx="700" cy="205" r="15" fill="#E8786C" opacity=".22"/>
+  <circle cx="700" cy="205" r="9" fill="#E8786C"/>
+  <text x="722" y="285" font-size="54" font-weight="700" fill="#E8786C">3,000</text>
+  <text x="724" y="316" font-size="20" font-weight="700" fill="#2B2B2B">累計ダウンロード（現在）</text>
+
+  <!-- future label -->
+  <text x="1420" y="6" text-anchor="end" font-size="21" font-weight="700" fill="#E8786C" opacity=".75">さらに拡大へ</text>
+
+  <!-- x axis labels -->
+  <text x="80"   y="424" text-anchor="middle" font-size="18" fill="#888">サービス開始</text>
+  <text x="430"  y="424" text-anchor="middle" font-size="18" fill="#888">6月</text>
+  <text x="700"  y="424" text-anchor="middle" font-size="19" font-weight="700" fill="#2B2B2B">現在（7月）</text>
+  <text x="1060" y="424" text-anchor="middle" font-size="18" fill="#888">今後</text>
+
+  <!-- legend -->
+  <line x1="1120" y1="446" x2="1168" y2="446" stroke="#E8786C" stroke-width="6" stroke-linecap="round"/>
+  <text x="1178" y="453" font-size="17" fill="#666">実績</text>
+  <line x1="1238" y1="446" x2="1286" y2="446" stroke="#E8786C" stroke-width="6" stroke-dasharray="12 11" stroke-linecap="round" opacity=".55"/>
+  <text x="1296" y="453" font-size="17" fill="#666">今後の見通し</text>
+</svg>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="n">27店</div><div class="l">高槻を中心とした加盟店</div></div>
+  <div class="stat"><div class="n">119袋</div><div class="l">廃棄から救った食品</div></div>
+  <div class="stat"><div class="n">¥45,263</div><div class="l">地元店への還元額</div></div>
+  <div class="stat"><div class="n">まちポケ高槻</div><div class="l">地域メディアに出品情報を掲載中</div></div>
+</div>
+
+<div class="note">※ 縦軸は推移の傾向を示すもので、目盛りは表示していません。現在値（累計ダウンロード3,000）は実績値です。今後の見通しは現在の増加傾向に基づく想定です。</div>
