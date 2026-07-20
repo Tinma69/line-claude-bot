@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>おすそわけ チラシ配布マップ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{font-family:"Meiryo",sans-serif;background:#fff}
+  #wrap{width:1200px;height:910px;display:flex}
+  #map{width:760px;height:910px}
+  #side{width:440px;height:910px;padding:20px 24px;background:#fafafa;border-left:3px solid #37474F;overflow:hidden}
+  @media (max-width:1100px){
+    #wrap{width:100%;height:auto;flex-direction:column}
+    #map{width:100%;height:460px}
+    #side{width:100%;height:auto;border-left:none;border-top:3px solid #37474F}
+  }
+  h1{font-size:25px;color:#1b5e20;line-height:1.25}
+  h1 small{display:block;font-size:14px;color:#555;font-weight:normal;margin-top:5px}
+  .sec{font-size:14px;font-weight:bold;color:#37474F;margin:18px 0 8px;border-left:5px solid #66bb6a;padding-left:8px}
+  .cl{display:flex;align-items:center;font-size:15px;margin:7px 0}
+  .cl i{width:18px;height:18px;border-radius:50%;margin-right:10px;flex:0 0 auto}
+  .cl b{width:140px}
+  .cl span{color:#666;font-size:13px}
+  .order{font-size:17px;font-weight:bold;color:#222;background:#fff;border:2px solid #66bb6a;border-radius:8px;padding:10px;text-align:center;line-height:1.5}
+  .order em{color:#e53935;font-style:normal}
+  ul{margin:6px 0 0 20px;font-size:14px;line-height:1.7}
+  .warn{background:#fff3e0;border-left:4px solid #fb8c00;padding:7px 10px;font-size:12.5px;margin-top:10px;border-radius:4px}
+  .assign{font-size:13.5px;line-height:1.7;background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px 10px}
+  .assign b{display:inline-block;width:118px}
+  .lbl{background:rgba(255,255,255,.85);border:none;border-radius:3px;box-shadow:none;font-size:9px;color:#555;padding:0 2px;font-weight:normal;white-space:nowrap}
+  .lbl::before{display:none}
+  .danchi{display:flex;align-items:center;white-space:nowrap}
+  .danchi .s{font-size:22px;line-height:1;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff}
+  .danchi .t{font-size:10px;font-weight:bold;color:#111;background:rgba(255,255,255,.92);border-radius:3px;padding:0 3px;margin-left:1px;box-shadow:0 0 2px rgba(0,0,0,.3)}
+  .dsec{font-size:13px;line-height:1.65}
+  .dsec .star{color:#d81b60}
+  .dwarn{font-size:11px;color:#666;margin-top:4px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="side">
+    <h1>おすそわけ チラシ配布マップ<small>登録17店の徒歩10〜15分圏のマンションにポスティング</small></h1>
+
+    <div class="sec">エリアは6つ（色＝地図と対応）</div>
+    <div id="clusters"></div>
+
+    <div class="sec">撒く順番</div>
+    <div class="order"><em>A 高槻駅</em> → E 富田 → D 津之江<br>→ F 土室 → C 高垣 → B 南平台<br>
+      <span style="font-size:13px;color:#e53935">※ A＋E だけで17店中9店カバー！まずここ</span></div>
+
+    <div class="sec"><span style="color:#d81b60">★</span> 狙い目の大型団地（投函◎・効率最強）</div>
+    <div class="dsec">
+      <span style="color:#d50000">🚩</span><b style="color:#d50000">UR富田団地(牧田町) 約2,582戸</b> ←今回の主役<br>
+      <span class="star">★</span>下田部団地(登町) <b>1,140戸</b><br>
+      <span class="star">★</span>阪急ヒルズコート高槻(上土室) <b>494戸</b><br>
+      <span class="star">★</span>別所本町 団地群 <b>586戸</b> ／ 大和サニー(宮野町) <b>412戸</b><br>
+      <span class="star">★</span>大畑町 摂津M群 <b>約570戸</b> ／ 古曽部町 団地群 <b>419戸</b><br>
+      <span class="dwarn">団地はオートロック無し＝集合ポストに一気に投函できる。<b>★の位置は町のおおよそ。投函前に住所で確認。UR団地は管理事務所に投函可否確認。</b></span>
+    </div>
+
+    <div class="sec">担当割り（例・10人）</div>
+    <div class="assign">
+      <b><span style="color:#e53935">A 高槻駅</span></b>3人（最重要・広い）<br>
+      <b><span style="color:#fb8c00">E 富田</span></b>2人（団地多い）<br>
+      <b><span style="color:#f9a825">F 土室・氷室</span></b>2人<br>
+      <b><span style="color:#1e88e5">D 津之江</span></b>1人 ／ <b style="width:auto"><span style="color:#43a047">C 高垣</span></b>1人 ／ <b style="width:auto"><span style="color:#8e24aa">B 南平台</span></b>1人
+    </div>
+
+    <div class="sec">やること（手順）</div>
+    <ul>
+      <li><b>①</b> 担当エリアを決め、管理表の「担当者」に名前を入れる</li>
+      <li><b>②</b> <b>密度「高」の町丁目から</b>潰す（マンション集合ポスト中心）</li>
+      <li><b>③</b> チラシのQRは<b>その区域の最寄り店</b>のものを使う</li>
+      <li><b>④</b> 配り終えた町丁目は管理表を<b>「済」</b>に</li>
+    </ul>
+    <div class="warn">⚠️「チラシお断り」掲示・管理規約NGのマンションには入れない</div>
+  </div>
+</div>
+<script>
+const stores=[
+ ['A','炒飯91kuppin',34.8516588,135.62729],['A','ピケ',34.850643,135.621597],
+ ['A','レモンド',34.8498497,135.623138],['A','BAR椿',34.8501942,135.6206394],
+ ['A','ワインバルバ',34.846363,135.618927],['A','ビーチアイランド',34.8533464,135.6144381],
+ ['A','マウンテン',34.8521957,135.614822],['D','anpan',34.8397064,135.606537],
+ ['D','LUCCA',34.8401627,135.608036],['C','Bake House Nagomi',34.8591134,135.636461],
+ ['B','づぼら食堂',34.8584633,135.595947],['B','レヴェイユ',34.8594551,135.585999],
+ ['E','珈琲館松屋',34.83594,135.592755],['E','PEEKABOO',34.8364983,135.588257],
+ ['F','Taps',34.8506995,135.590336],['F','料理家三',34.8531992,135.5765007],
+ ['F','コウタロウ',34.8503304,135.583160]];
+const col={A:'#e53935',E:'#fb8c00',D:'#1e88e5',F:'#f9a825',C:'#43a047',B:'#8e24aa'};
+const cname={A:'高槻駅 中心',E:'富田',D:'津之江',F:'土室・氷室',C:'高垣',B:'南平台'};
+const order=['A','E','D','F','C','B'];
+// クラスタ別集計
+const groups={};
+stores.forEach(s=>{(groups[s[0]]=groups[s[0]]||[]).push(s)});
+// サイドのクラスタ一覧
+document.getElementById('clusters').innerHTML=order.map(k=>
+ `<div class="cl"><i style="background:${col[k]}"></i><b>${k}：${cname[k]}</b><span>${groups[k].length}店</span></div>`).join('');
+
+const map=L.map('map',{zoomControl:false,attributionControl:false});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+const all=[];
+function m(lat){return 1/111320}
+order.forEach(k=>{
+  const g=groups[k];
+  const clat=g.reduce((a,s)=>a+s[2],0)/g.length;
+  const clng=g.reduce((a,s)=>a+s[3],0)/g.length;
+  // 中心から最遠店 + 800m を半径に（エリアブロック表現）
+  let maxd=0;
+  g.forEach(s=>{const dy=(s[2]-clat)*111320,dx=(s[3]-clng)*111320*Math.cos(clat*Math.PI/180);maxd=Math.max(maxd,Math.hypot(dx,dy))});
+  L.circle([clat,clng],{radius:maxd+850,color:col[k],weight:2.5,fillColor:col[k],fillOpacity:.18}).addTo(map);
+  // ラベル
+  L.marker([clat,clng],{icon:L.divIcon({className:'',html:`<div style="font-size:20px;font-weight:bold;color:#fff;background:${col[k]};border-radius:50%;width:34px;height:34px;line-height:34px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.4)">${k}</div>`,iconSize:[34,34],iconAnchor:[17,17]})}).addTo(map);
+  g.forEach(s=>{L.circleMarker([s[2],s[3]],{radius:4,color:'#333',weight:1,fillColor:'#fff',fillOpacity:1}).addTo(map).bindTooltip(s[1],{permanent:true,direction:'right',offset:[5,0],className:'lbl'});all.push([s[2],s[3]])});
+});
+// ★狙い目の大型団地（投函しやすい・位置は町のおおよそ）
+const danchi=[
+ ['C','下田部団地','1,140戸',34.8276,135.6225],
+ ['F','阪急ヒルズコート高槻','494戸',34.8525,135.5800],
+ ['B','別所本町 団地群','586戸',34.8639,135.6275],
+ ['C','大和サニーハイツ','412戸',34.8518,135.6368],
+ ['F','大畑町 摂津マンション群','約570戸',34.8387,135.5915],
+ ['A','古曽部町 団地群','419戸',34.8573,135.6238],
+ ['F','グリーンマークス高槻','200戸',34.8467,135.5973],
+ ['E','ライオンズマンション','106戸',34.8364,135.5936],
+ ['D','府営深沢住宅','大型',34.8279,135.6373],
+ ['E','高槻セントポリア','73戸',34.8286,135.6010],
+ ['D','メゾン津之江','50戸',34.8424,135.6061],
+ ['C','チサンマンション','51戸',34.8474,135.6142],
+ ['富田団地','★UR富田団地','約2,582戸',34.8202,135.6031],
+];
+const dcol=Object.assign({富田団地:'#d50000'},col);
+danchi.forEach(([k,name,sz,lat,lng])=>{
+  L.marker([lat,lng],{zIndexOffset:1000,icon:L.divIcon({className:'',html:`<div class="danchi"><span class="s" style="color:${dcol[k]}">★</span><span class="t">${name} <b style="color:#d81b60">${sz}</b></span></div>`,iconSize:[0,0],iconAnchor:[11,11]})}).addTo(map);
+  all.push([lat,lng]);
+});
+map.fitBounds(all,{padding:[55,55]});
+L.control.scale({imperial:false}).addTo(map);
+</script>
+</body>
+</html>

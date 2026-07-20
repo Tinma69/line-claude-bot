@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "kouta-os",
+      "name": "map-preview",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["preview-server.js"],
-      "port": 3002,
+      "runtimeArgs": ["preview_server.js"],
+      "port": 4178,
       "autoPort": false
     }
   ]

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>おすそわけ 配布マップ プレビュー</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html,body{margin:0;height:100%;font-family:"Meiryo",sans-serif}
+  #map{height:100%}
+  .legend{background:#fff;padding:8px 10px;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);font-size:13px;line-height:1.6}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px}
+  .title{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:1000;background:#37474F;color:#fff;padding:6px 14px;border-radius:6px;font-size:14px;font-weight:bold;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+</style>
+</head>
+<body>
+<div class="title">おすそわけ 配布マップ（高槻17店・徒歩10分=800m / 15分=1200m）</div>
+<div id="map"></div>
+<script>
+const stores=[
+ ['A','炒飯91kuppin',34.8516588,135.62729],['A','ピケ',34.850643,135.621597],
+ ['A','レモンド',34.8498497,135.623138],['A','BAR椿',34.8501942,135.6206394],
+ ['A','ワインバルバ',34.846363,135.618927],['A','ビーチアイランド',34.8533464,135.6144381],
+ ['A','マウンテン',34.8521957,135.614822],['D','anpan',34.8397064,135.606537],
+ ['D','LUCCA',34.8401627,135.608036],['C','Bake House Nagomi',34.8591134,135.636461],
+ ['B','づぼら食堂',34.8584633,135.595947],['B','レヴェイユ',34.8594551,135.585999],
+ ['E','珈琲館松屋',34.83594,135.592755],['E','PEEKABOO',34.8364983,135.588257],
+ ['F','Taps BURGER',34.8506995,135.590336],['F','料理家三',34.8531992,135.5765007],
+ ['F','コウタロウ',34.8503304,135.583160]];
+const col={A:'#e53935',E:'#fb8c00',D:'#1e88e5',F:'#fdd835',C:'#43a047',B:'#8e24aa'};
+const cname={A:'高槻駅',E:'富田',D:'津之江',F:'土室・氷室',C:'高垣',B:'南平台'};
+const map=L.map('map');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+const all=[];
+stores.forEach(([c,n,lat,lng])=>{
+  L.circle([lat,lng],{radius:1200,color:col[c],weight:1,fill:false,opacity:.5}).addTo(map);
+  L.circle([lat,lng],{radius:800,color:col[c],weight:2,fill:false,opacity:.85}).addTo(map);
+  L.circleMarker([lat,lng],{radius:6,color:'#fff',weight:1.5,fillColor:col[c],fillOpacity:1}).addTo(map).bindTooltip(n,{permanent:false});
+  all.push([lat,lng]);
+});
+map.fitBounds(all,{padding:[40,40]});
+const lg=L.control({position:'bottomright'});
+lg.onAdd=function(){const d=L.DomUtil.create('div','legend');d.innerHTML='<b>クラスター</b><br>'+Object.keys(col).map(k=>`<i style="background:${col[k]}"></i>${k} ${cname[k]}`).join('<br>');return d;};
+lg.addTo(map);
+</script>
+</body>
+</html>

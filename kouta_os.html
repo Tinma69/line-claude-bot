@@ -7,6 +7,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/htm@3.1.1/dist/htm.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -14,6 +16,14 @@
   body { background: #080808; color: #efefef; font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   input, select, textarea { -webkit-appearance: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media print {
+    body { background: #fff !important; color: #000 !important; }
+    .no-print { display: none !important; }
+    .print-only { display: block !important; }
+    .print-page { background: #fff !important; color: #000 !important; padding: 20mm !important; font-size: 11pt !important; line-height: 1.7 !important; white-space: pre-wrap !important; font-family: 'Hiragino Sans','Yu Gothic',sans-serif !important; }
+    @page { size: A4; margin: 0; }
+  }
+  .print-only { display: none; }
 </style>
 </head>
 <body>
@@ -27,12 +37,66 @@ const HKEY = "kos_habit_v4";
 const DKEY = "kos_date_v4";
 const RKEY = "kos_race_v1";
 const BKEY = "kos_race_backups_v1";
+const REPKEY = "kos_reports_v1";
 const MAX_BACKUPS = 20;
 
 // ===== クラウド同期 =====
 function cloudSave(key, data) {
   fetch("/api/sync/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, data }) }).catch(() => {});
 }
+async function exportPDF(text, dateLabel) {
+  const JsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+  if (!JsPDFCtor || typeof html2canvas === 'undefined') { alert('PDFライブラリの読み込みに失敗しました。ネット接続を確認してください。'); return; }
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;';
+  overlay.textContent = 'PDF生成中...';
+  document.body.appendChild(overlay);
+
+  // A4: 210x297mm. 72dpi基準で 595x842pt。html2canvasはCSSピクセル基準。
+  // 描画幅794px(=210mm at 96dpi), 1ページの高さ1123px(=297mm at 96dpi)
+  const PAGE_W = 794;
+  const PAGE_H = 1123;
+  const PADDING = 50;
+  const LINE_HEIGHT = 22;
+  const FONT_SIZE = 13;
+  const linesPerPage = Math.floor((PAGE_H - PADDING*2) / LINE_HEIGHT);
+
+  // テキストを行で分割し、ページ単位にまとめる
+  const allLines = text.split('\n');
+  const pages = [];
+  for (let i=0; i<allLines.length; i+=linesPerPage) {
+    pages.push(allLines.slice(i, i+linesPerPage).join('\n'));
+  }
+
+  try {
+    const pdf = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const pdfW = 210, pdfH = 297;
+
+    for (let p=0; p<pages.length; p++) {
+      overlay.textContent = 'PDF生成中... (' + (p+1) + '/' + pages.length + ')';
+      const div = document.createElement('div');
+      div.style.cssText = `position:fixed;top:0;left:0;width:${PAGE_W}px;height:${PAGE_H}px;background:#fff;color:#111;font-family:"Hiragino Sans","Yu Gothic","Meiryo",sans-serif;font-size:${FONT_SIZE}px;line-height:${LINE_HEIGHT}px;padding:${PADDING}px;white-space:pre-wrap;word-break:break-word;box-sizing:border-box;z-index:1;overflow:hidden;`;
+      div.textContent = pages[p];
+      document.body.appendChild(div);
+      await new Promise(r=>setTimeout(r,80));
+
+      const canvas = await html2canvas(div, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false, width: PAGE_W, height: PAGE_H, windowWidth: PAGE_W });
+      div.remove();
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      if (p>0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
+    }
+
+    pdf.save('レポート_' + dateLabel + '.pdf');
+    overlay.remove();
+  } catch (err) {
+    overlay.remove();
+    alert('PDF生成に失敗しました: ' + (err.message || err));
+  }
+}
+
 async function cloudLoad(key) {
   try {
     const res = await fetch("/api/sync/load/" + key);
@@ -261,8 +325,51 @@ function fileToBase64(file) {
 
 function RaceTab({ raceSessions, setRaceSessions }) {
   const [subTab,setSubTab]=useState("input");
-  const [reportIds,setReportIds]=useState([]);
+  const [reportIds,setReportIds]=useState(()=>{try{return JSON.parse(localStorage.getItem("kos_report_ids")||"[]");}catch{return [];}});
   const [copied,setCopied]=useState(false);
+  const [savedReports,setSavedReports]=useState(()=>JSON.parse(localStorage.getItem(REPKEY)||"[]"));
+  const [reportView,setReportView]=useState("create");
+  const [viewingReport,setViewingReport]=useState(null);
+  const [editedText,setEditedText]=useState(()=>localStorage.getItem("kos_report_draft")||"");
+  const [editKey,setEditKey]=useState(()=>localStorage.getItem("kos_report_draftkey")||"");
+  const [savingTitle,setSavingTitle]=useState(null);
+  const [titleInput,setTitleInput]=useState("");
+
+  useEffect(()=>{
+    (async()=>{
+      const cloud=await cloudLoad(REPKEY);
+      if(cloud&&Array.isArray(cloud)&&cloud.length>savedReports.length){
+        setSavedReports(cloud);localStorage.setItem(REPKEY,JSON.stringify(cloud));
+      }
+    })();
+  },[]);
+
+  // 編集中レポートを自動保存（リロードしても消えない）
+  useEffect(()=>{ localStorage.setItem("kos_report_draft",editedText); },[editedText]);
+  useEffect(()=>{ localStorage.setItem("kos_report_draftkey",editKey); },[editKey]);
+  useEffect(()=>{ localStorage.setItem("kos_report_ids",JSON.stringify(reportIds)); },[reportIds]);
+
+  const openSaveDialog=(text,recordIds,defaultTitle)=>{
+    setSavingTitle({text,recordIds});
+    setTitleInput(defaultTitle||"");
+  };
+  const confirmSave=()=>{
+    if(!savingTitle||!titleInput.trim()) return;
+    const rep={id:Date.now(),title:titleInput.trim(),text:savingTitle.text,recordIds:savingTitle.recordIds,createdAt:new Date().toLocaleString("ja-JP")};
+    const updated=[rep,...savedReports];
+    setSavedReports(updated);
+    localStorage.setItem(REPKEY,JSON.stringify(updated));
+    cloudSave(REPKEY,updated);
+    setSavingTitle(null);
+    setTitleInput("");
+  };
+  const deleteReport=(id)=>{
+    const updated=savedReports.filter(r=>r.id!==id);
+    setSavedReports(updated);
+    localStorage.setItem(REPKEY,JSON.stringify(updated));
+    cloudSave(REPKEY,updated);
+    if(viewingReport&&viewingReport.id===id) setViewingReport(null);
+  };
   const [form,setForm]=useState({date:todayStr(),type:"practice",circuit:"",car:"",driver:"",tireMileage:"",lapLengthKm:"",condition:"dry",sessions:[newSess(0)],qualPos:"",racePos:"",incidents:"",focus:"",notes:""});
   const [saved,setSaved]=useState(false);
   const [expanded,setExpanded]=useState(null);
@@ -691,6 +798,54 @@ function RaceTab({ raceSessions, setRaceSessions }) {
     </div>`}
 
     ${subTab==="report"&&html`<div>
+      ${savingTitle&&html`<div style=${{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:14,padding:"20px",width:"100%",maxWidth:380}}>
+          <div style=${{fontSize:14,fontWeight:700,marginBottom:12}}>レポートを保存</div>
+          <div style=${{fontSize:10,color:C.muted2,marginBottom:6,letterSpacing:"0.1em"}}>タイトル</div>
+          <input
+            value=${titleInput}
+            onChange=${e=>setTitleInput(e.target.value)}
+            onKeyDown=${e=>{if(e.key==="Enter")confirmSave();if(e.key==="Escape"){setSavingTitle(null);setTitleInput("");}}}
+            autoFocus
+            placeholder="例: 4月17日 鈴鹿"
+            style=${{width:"100%",background:C.s2,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:13,fontFamily:"inherit",outline:"none",marginBottom:14,boxSizing:"border-box"}}
+          />
+          <div style=${{display:"flex",gap:8}}>
+            <button onClick=${()=>{setSavingTitle(null);setTitleInput("");}} style=${{flex:1,background:C.s2,color:C.text,border:"1px solid "+C.border,borderRadius:8,padding:"9px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>キャンセル</button>
+            <button onClick=${confirmSave} disabled=${!titleInput.trim()} style=${{flex:1,background:titleInput.trim()?C.sim:C.muted,color:titleInput.trim()?"#000":C.muted2,border:"none",borderRadius:8,padding:"9px",fontSize:12,fontWeight:700,cursor:titleInput.trim()?"pointer":"default",fontFamily:"inherit"}}>保存</button>
+          </div>
+        </div>
+      </div>`}
+      <div style=${{display:"flex",gap:6,marginBottom:12,background:C.s1,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+        <button onClick=${()=>{setReportView("create");setViewingReport(null);}} style=${{flex:1,padding:"8px",fontSize:11,fontWeight:reportView==="create"?700:400,background:reportView==="create"?C.race:"transparent",color:reportView==="create"?"#000":C.muted2,border:"none",cursor:"pointer",fontFamily:"inherit"}}>＋ 新規作成</button>
+        <button onClick=${()=>{setReportView("history");setViewingReport(null);}} style=${{flex:1,padding:"8px",fontSize:11,fontWeight:reportView==="history"?700:400,background:reportView==="history"?C.race:"transparent",color:reportView==="history"?"#000":C.muted2,border:"none",cursor:"pointer",fontFamily:"inherit"}}>📚 保存済み（${savedReports.length}）</button>
+      </div>
+      ${reportView==="history"&&!viewingReport&&html`<div>
+        ${savedReports.length===0?html`<div style=${{textAlign:"center",padding:"30px 0",color:C.muted2}}>
+          <div style=${{fontSize:24,marginBottom:8}}>📚</div>
+          <div style=${{fontSize:12}}>保存済みレポートはありません</div>
+        </div>`:savedReports.map(r=>html`<div key=${r.id} style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:9,padding:"11px 13px",marginBottom:7}}>
+          <div style=${{fontSize:13,fontWeight:600,marginBottom:3}}>${r.title}</div>
+          <div style=${{fontSize:10,color:C.muted2,marginBottom:7}}>${r.createdAt}　${r.recordIds.length}件の記録</div>
+          <div style=${{display:"flex",gap:6}}>
+            <button onClick=${()=>setViewingReport(r)} style=${{flex:1,background:C.race+"22",color:C.race,border:"1px solid "+C.race+"44",borderRadius:6,padding:"7px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>開く</button>
+            <button onClick=${()=>deleteReport(r.id)} style=${{background:"rgba(255,58,58,.08)",color:C.run,border:"1px solid rgba(255,58,58,.2)",borderRadius:6,padding:"7px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+          </div>
+        </div>`)}
+      </div>`}
+      ${viewingReport&&html`<div>
+        <div style=${{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <button onClick=${()=>setViewingReport(null)} style=${{background:C.s2,color:C.text,border:"1px solid "+C.border,borderRadius:7,padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>← 戻る</button>
+          <div style=${{display:"flex",gap:6}}>
+            <button onClick=${()=>exportPDF(viewingReport.text,viewingReport.title)} style=${{background:C.sleep+"22",color:C.sleep,border:"1px solid "+C.sleep+"44",borderRadius:7,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📄 PDF</button>
+            <button onClick=${()=>{try{navigator.clipboard.writeText(viewingReport.text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});}catch{}}} style=${{background:copied?C.sim:C.race,color:"#000",border:"none",borderRadius:7,padding:"6px 14px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>${copied?"✓":"📋 コピー"}</button>
+          </div>
+        </div>
+        <div style=${{fontSize:14,fontWeight:700,marginBottom:6}}>${viewingReport.title}</div>
+        <div style=${{fontSize:10,color:C.muted2,marginBottom:10}}>${viewingReport.createdAt}</div>
+        <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"16px",whiteSpace:"pre-wrap",fontSize:12,lineHeight:1.9}}>${viewingReport.text}</div>
+      </div>`}
+      ${reportView==="create"&&html`<div>
       ${raceSessions.length===0?html`<div style=${{textAlign:"center",padding:"40px 0",color:C.muted2}}>
         <div style=${{fontSize:32,marginBottom:8}}>📄</div>
         <div style=${{fontSize:12}}>レース記録を保存するとレポートを作成できます</div>
@@ -798,7 +953,13 @@ function RaceTab({ raceSessions, setRaceSessions }) {
           });
           lines.push("");
           lines.push("引き続きご支援のほど、よろしくお願いいたします。");
-          const text=lines.join("\n");
+          const generated=lines.join("\n");
+          const currentKey=reportIds.join(",");
+          if(editKey!==currentKey){
+            // 選択が変わった or 初回 → 編集テキストを再生成
+            setTimeout(()=>{setEditedText(generated);setEditKey(currentKey);},0);
+          }
+          const text=editKey===currentKey&&editedText?editedText:generated;
 
           const copyText=()=>{
             try{
@@ -810,18 +971,26 @@ function RaceTab({ raceSessions, setRaceSessions }) {
           };
 
           return html`<div>
-            <div style=${{fontSize:10,color:C.muted2,marginBottom:8}}>${selected.length}件選択中</div>
-            <div style=${{display:"flex",gap:8,marginBottom:10}}>
-              <button onClick=${copyText} style=${{flex:1,background:copied?C.sim:C.race,color:"#000",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all .2s"}}>
-                ${copied?"✓ コピーしました！":"📋 テキストをコピー"}
+            <div style=${{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style=${{fontSize:10,color:C.muted2}}>${selected.length}件選択中</span>
+              <button onClick=${()=>setEditedText(generated)} style=${{fontSize:10,color:C.muted2,background:"none",border:"1px solid "+C.border,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontFamily:"inherit"}}>↻ 元に戻す</button>
+            </div>
+            <div style=${{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <button onClick=${copyText} style=${{flex:"1 1 140px",background:copied?C.sim:C.race,color:"#000",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all .2s"}}>
+                ${copied?"✓ コピーしました！":"📋 コピー"}
               </button>
-              <button onClick=${()=>window.print()} style=${{background:C.s2,color:C.text,border:"1px solid "+C.border,borderRadius:9,padding:"11px 14px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🖨️</button>
+              <button onClick=${()=>openSaveDialog(text,reportIds,(selected[0]&&selected[0].date?selected[0].date+" ":"")+(selected[0]&&selected[0].circuit||""))} style=${{background:C.sim+"22",color:C.sim,border:"1px solid "+C.sim+"44",borderRadius:9,padding:"11px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>💾 保存</button>
+              <button onClick=${()=>exportPDF(text,(selected[0]&&selected[0].date)||todayStr())} style=${{background:C.sleep+"22",color:C.sleep,border:"1px solid "+C.sleep+"44",borderRadius:9,padding:"11px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📄 PDF</button>
             </div>
-            <div style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"16px",whiteSpace:"pre-wrap",fontSize:12,lineHeight:1.9,color:C.text,fontFamily:"inherit"}}>
-              ${text}
-            </div>
+            <div style=${{fontSize:9,color:C.muted2,marginBottom:5,letterSpacing:"0.1em"}}>↓ 編集できます（変更内容がコピー・保存・PDFに反映されます）</div>
+            <textarea
+              value=${text}
+              onChange=${e=>setEditedText(e.target.value)}
+              style=${{background:C.s1,border:"1px solid "+C.border,borderRadius:10,padding:"16px",fontSize:12,lineHeight:1.9,color:C.text,fontFamily:"inherit",width:"100%",minHeight:"500px",resize:"vertical",outline:"none",boxSizing:"border-box"}}
+            />
           </div>`;
         })()}
+      </div>`}
       </div>`}
     </div>`}
   </div>`;
@@ -880,6 +1049,7 @@ function App() {
   const saveTasks=t=>{setTasks(t);localStorage.setItem(TKEY,JSON.stringify(t));cloudSave(TKEY,t);};
   const saveHabits=h=>{setHabits(h);localStorage.setItem(HKEY,JSON.stringify(h));cloudSave(HKEY,h);};
   const toggleTask=id=>saveTasks(tasks.map(t=>t.id===id?{...t,done:!t.done}:t));
+  const deleteTask=id=>saveTasks(tasks.filter(t=>t.id!==id));
   const addTask=()=>{if(!newTask.trim()) return;saveTasks([...tasks,{id:Date.now(),name:newTask,priority:newPri,time:"",cat:"work",done:false}]);setNewTask("");};
 
   const saveTracker=()=>{
@@ -961,6 +1131,7 @@ function App() {
                 ${t.time&&html`<span style=${{fontSize:9,padding:"2px 7px",borderRadius:20,background:C.s3,color:C.muted2}}>${t.time}</span>`}
               </div>
             </div>
+            <div onClick=${e=>{e.stopPropagation();if(confirm("「"+t.name+"」を削除しますか？"))deleteTask(t.id);}} style=${{padding:"6px 10px",color:C.muted2,fontSize:16,cursor:"pointer",userSelect:"none",flexShrink:0}}>×</div>
           </div>`)}
         </div>`;
       })}
