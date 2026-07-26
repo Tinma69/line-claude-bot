@@ -1,0 +1,32 @@
+name: 供給ウォッチ
+
+on:
+  schedule:
+    - cron: '30 1 * * *'  # 10:30 JST
+    - cron: '30 6 * * *'  # 15:30 JST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 実行（休眠店検出＋声かけ文生成）
+        run: node watch_osusowake_supply.js
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_TO_USER_ID: ${{ secrets.LINE_TO_USER_ID }}
+      - name: 履歴とレポートをコミット
+        run: |
+          git config user.name "osusowake-automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add data_supply_history.json "おすそわけ_供給レポート_最新.txt"
+          git commit -m "chore: 供給ウォッチ自動更新 [skip render]" || echo "変更なし"
+          git pull --rebase origin main || true
+          git push

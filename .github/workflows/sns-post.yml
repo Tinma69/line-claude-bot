@@ -1,0 +1,40 @@
+name: SNS自動投稿
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 12:00 JST 曜日テーマ投稿
+    - cron: '0 8 * * *'   # 17:00 JST 本日の出品まとめ
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'theme または daily（空なら時刻で自動判定）'
+        required: false
+        default: ''
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: モード判定
+        id: mode
+        run: |
+          if [ -n "${{ github.event.inputs.mode }}" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%H)" -lt 6 ]; then
+            echo "mode=theme" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=daily" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 投稿
+        run: node post_osusowake_sns.js --mode "${{ steps.mode.outputs.mode }}" --live
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}

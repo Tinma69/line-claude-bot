@@ -134,7 +134,7 @@ async function postToX(text) {
   const ck = process.env.X_API_KEY, cs = process.env.X_API_SECRET;
   const tk = process.env.X_ACCESS_TOKEN, ts = process.env.X_ACCESS_SECRET;
   if (!ck || !cs || !tk || !ts) throw new Error("X APIキーが未設定（X_API_KEY等）");
-  const url = "https://api.twitter.com/2/tweets";
+  const url = "https://api.x.com/2/tweets";
   const oauth = {
     oauth_consumer_key: ck,
     oauth_nonce: crypto.randomBytes(16).toString("hex"),
@@ -150,7 +150,7 @@ async function postToX(text) {
   const authHeader = "OAuth " + Object.keys(oauth).sort().map((k) => `${pct(k)}="${pct(oauth[k])}"`).join(", ");
   const body = JSON.stringify({ text });
   const res = await request({
-    hostname: "api.twitter.com", path: "/2/tweets", method: "POST",
+    hostname: "api.x.com", path: "/2/tweets", method: "POST",
     headers: { Authorization: authHeader, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
   }, body);
   if (res.status !== 201) throw new Error(`X投稿失敗 HTTP ${res.status}: ${res.body}`);
@@ -208,9 +208,9 @@ async function postToThreads(text) {
   console.log("\n🚀 投稿中…");
   const results = [];
   try { const r = await postToX(xText); results.push(`✅ X: 投稿成功 (id: ${r.data?.id})`); }
-  catch (e) { results.push(`❌ X: ${e.message}`); }
+  catch (e) { results.push(`${e.message.includes("未設定") ? "⏭" : "❌"} X: ${e.message}`); }
   try { const r = await postToThreads(threadsText); results.push(`✅ Threads: 投稿成功 (id: ${r.id})`); }
-  catch (e) { results.push(`❌ Threads: ${e.message}`); }
+  catch (e) { results.push(`${e.message.includes("未設定") ? "⏭" : "❌"} Threads: ${e.message}`); }
   results.forEach((r) => console.log(r));
   if (results.some((r) => r.startsWith("❌"))) process.exit(1);
 })().catch((e) => { console.error("エラー:", e.message); process.exit(1); });
