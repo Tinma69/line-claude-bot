@@ -2,8 +2,9 @@ name: SNS自動投稿
 
 on:
   schedule:
-    - cron: '0 3 * * *'   # 12:00 JST 曜日テーマ投稿
-    - cron: '0 8 * * *'   # 17:00 JST 本日の出品まとめ
+    # GitHub Actionsの混雑遅延(1〜3時間)を見込んで前倒し設定。実投稿は昼前後/夕方に着地する想定
+    - cron: '20 1 * * *'  # 10:20 JST発火 → 遅延込みで昼ごろ 曜日テーマ投稿
+    - cron: '50 6 * * *'  # 15:50 JST発火 → 遅延込みで17時ごろ 本日の出品まとめ
   workflow_dispatch:
     inputs:
       mode:
@@ -24,7 +25,7 @@ jobs:
         run: |
           if [ -n "${{ github.event.inputs.mode }}" ]; then
             echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
-          elif [ "$(date -u +%H)" -lt 6 ]; then
+          elif [ "${{ github.event.schedule }}" = "20 1 * * *" ]; then
             echo "mode=theme" >> "$GITHUB_OUTPUT"
           else
             echo "mode=daily" >> "$GITHUB_OUTPUT"
