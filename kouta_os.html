@@ -153,12 +153,14 @@ const CIRCUIT_LAP_KM = {
 };
 
 const DEFAULT_TASKS = [
-  {id:1,name:"起床 7:30",priority:"must",time:"07:30",cat:"private",done:false},
-  {id:2,name:"ランニング 4.5km → 出社",priority:"must",time:"08:00",cat:"private",done:false},
+  {id:1,name:"起床 8:00・準備",priority:"must",time:"08:00",cat:"private",done:false},
+  {id:2,name:"ラン30分（ラン日）or 筋トレ10:45〜（筋トレ日）",priority:"must",time:"08:30",cat:"private",done:false},
   {id:3,name:"Claudeの研究・API活用",priority:"high",time:"",cat:"work",done:false},
   {id:4,name:"フードロスアプリ 営業パート",priority:"high",time:"",cat:"work",done:false},
   {id:5,name:"会社アパレル業務",priority:"mid",time:"",cat:"work",done:false},
-  {id:6,name:"レーシングシミュレーター",priority:"low",time:"",cat:"private",done:false},
+  {id:6,name:"シミュレーター 90分（仕事終わり直結）",priority:"high",time:"19:00",cat:"private",done:false},
+  {id:7,name:"風呂・ストレッチ・歯磨き",priority:"mid",time:"22:00",cat:"private",done:false},
+  {id:8,name:"スクリーンフリー → 24:00就寝",priority:"must",time:"23:00",cat:"private",done:false},
 ];
 const PRESET_HABITS = [
   { date:"2026-03-30", runKm:4.5, runMin:45, sleepH:7, weightKg:66.2, simMin:null, calKcal:null, calMemo:"" }
