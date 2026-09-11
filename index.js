@@ -38,12 +38,14 @@ async function getTasks(userId) {
     .eq('user_id', userId).eq('date', today).order('id');
   if (error || !data || data.length === 0) {
     const defaults = [
-      { user_id: userId, name: '起床 7:30',             priority: 'must', cat: 'private', time: '07:30', done: false, date: today },
-      { user_id: userId, name: 'ランニング 4.5km → 出社', priority: 'must', cat: 'private', time: '08:00', done: false, date: today },
+      { user_id: userId, name: '起床 8:00・準備',        priority: 'must', cat: 'private', time: '08:00', done: false, date: today },
+      { user_id: userId, name: 'ラン30分（ラン日）or 筋トレ10:45〜（筋トレ日）', priority: 'must', cat: 'private', time: '08:30', done: false, date: today },
       { user_id: userId, name: 'Claudeの研究・API活用',  priority: 'high', cat: 'work',    time: '',      done: false, date: today },
       { user_id: userId, name: 'フードロスアプリ 営業パート', priority: 'high', cat: 'work', time: '',   done: false, date: today },
       { user_id: userId, name: '会社アパレル業務',        priority: 'mid',  cat: 'work',    time: '',      done: false, date: today },
-      { user_id: userId, name: 'レーシングシミュレーター', priority: 'low',  cat: 'private', time: '',     done: false, date: today },
+      { user_id: userId, name: 'シミュレーター 90分（仕事終わり直結）', priority: 'high', cat: 'private', time: '19:00', done: false, date: today },
+      { user_id: userId, name: '風呂・ストレッチ・歯磨き', priority: 'mid',  cat: 'private', time: '22:00', done: false, date: today },
+      { user_id: userId, name: 'スクリーンフリー → 24:00就寝', priority: 'must', cat: 'private', time: '23:00', done: false, date: today },
     ];
     const { data: inserted } = await supabase.from('tasks').insert(defaults).select();
     return inserted || defaults;
